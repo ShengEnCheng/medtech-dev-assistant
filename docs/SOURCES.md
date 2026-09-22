@@ -220,6 +220,72 @@ openFDA 在 `meta.last_updated` 直接給出資料日期，最可靠。
 4. TFDA 開放資料更新頻率約每週（實測來源檔日期 9/17，
    當日為 9/22，落後 5 天）。
 
+## 一之三、論文先前技術來源（M5，免 API key）
+
+專利的先前技術不只有專利。以下四個來源全部免 API key，2026-09 實測可用。
+
+| 來源 | 端點 | 特性 | 筆數（實測） |
+|------|------|------|------------|
+| Europe PMC | `ebi.ac.uk/europepmc/webservices/rest/search` | 生醫核心，含預印本（source=PPR） | 2,117 |
+| OpenAlex | `api.openalex.org/works` | 跨領域，**可依 ROR 機構篩選** | 8,075 |
+| Crossref | `api.crossref.org/works` | DOI 後設資料完整，含學位論文 | — |
+| arXiv | `export.arxiv.org/api/query` | 工程預印本 | — |
+
+### 關鍵參數與踩坑
+
+**Europe PMC**
+- 參數：`query`、`format=json`、`pageSize`、`resultType=core`
+- **不要加 `sort=CITED desc`**：實測同一查詢，依引用數排序會撈到
+  泛論型高引用回顧（Acinetobacter baumannii、AmpC beta-lactamases），
+  相關度排序才會撈到感測器與偵測技術文獻 —— 後者才可能構成新穎性障礙。
+- **間歇性空回應**：偶爾只回 `{"version": "6.9"}`（約連 6 次中 1 次，
+  間隔 2 秒）。屬伺服器端限流。**必須重試**，否則會靜默漏掉整個來源。
+  偵測方式：`set(d.keys()) <= {"version"}`。
+- `resultType=core` 回傳約 63 KB／8 筆；`lite` 約 7.5 KB，可省頻寬。
+
+**OpenAlex**
+- 機構篩選：`filter=authorships.institutions.ror:<ROR ID>`
+- `select` 參數可大幅減少回傳量
+- **type:patent 回傳 0 筆** —— OpenAlex 不含專利，不要用來查專利
+- 論文的 `cited_by` 不含專利引用（實測 count 為 0），
+  NPL 的專利引用關係需從專利端查
+
+**長庚體系 ROR ID（自我碰撞檢測用）**
+| 機構 | ROR |
+|------|-----|
+| 長庚大學 | `https://ror.org/00d80zx46` |
+| 長庚紀念醫院 | `https://ror.org/02verss31` |
+| 林口長庚 | `https://ror.org/02dnn6q67` |
+| 基隆長庚 | `https://ror.org/020dg9f27` |
+| 長庚兒童醫院 | `https://ror.org/054e9ag92` |
+
+> ROR API 已改版：舊路徑 `api.ror.org/organizations` 的 `name` 欄位
+> 不存在，需用 `api.ror.org/v2/organizations` 並解析 `names[]`。
+
+**Crossref**
+- `select` 可只取需要的欄位
+- 需過濾 `type` 為 `component`／`reference-entry`／`peer-review`
+  者（圖表附件與百科條目，非真正文獻）
+
+**Semantic Scholar** — 實測 HTTP 429（限流），未採用。
+
+### 各國優惠期法源（已逐一查證）
+
+| 地區 | 期間 | 涵蓋學術發表 | 法源 |
+|------|------|------------|------|
+| 台灣 | 12 個月 | 是 | 專利法第 22 條第 3 項（2022 年由 6 個月放寬） |
+| 美國 | 12 個月 | 是 | 35 U.S.C. 102(b)（AIA） |
+| 日本 | 12 個月 | 是（須程序聲明） | 特許法第 30 條 |
+| 韓國 | 12 個月 | 是（有程序要求） | 特許法第 30 條 |
+| 中國 | 6 個月 | **僅限規定的學術／技術會議** | 專利法第 24 條 |
+| 歐洲 | 6 個月 | **否** | EPC Art. 55（僅明顯濫用與官方展覽） |
+
+> 台灣法條原文（law.moj.gov.tw 實測）：「申請人出於本意或非出於本意
+> 所致公開之事實發生後十二個月內申請者，該事實非屬第一項各款或前項
+> 不得取得發明專利之情事。」
+>
+> 網路常見「6 個月」為 2022 年修法前舊資訊，勿引用。
+
 ## 二、已確認不可用（勿再嘗試）
 
 | 來源 | 實測結果 | 備註 |
