@@ -126,6 +126,60 @@ FPO 無 `twpat` 參數，實測無效。
 
 ---
 
+### 9. PubMed E-utilities（疾病負擔文獻）
+
+- 端點：`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/`
+- 免 API key（未帶 key 者每秒最多 3 次，已設 0.4 秒節流）
+- esearch → esummary → efetch 三段取得標題與摘要
+
+**這是疾病負擔模組的核心來源。** Biodesign 要的數字
+（發生率、現行療法失效比例、每人花費）多半只存在文獻裡。
+
+**踩到的坑（兩輪）**
+
+1. **布林寫法反而變差**：用
+   `"urinary retention" AND (prevalence OR incidence)`
+   會抑制 PubMed 的 automatic term mapping，
+   查 urinary retention 竟回傳「多汗症盛行率」等不相關文獻。
+   → 改用**自然語言片語**（不加引號、不加 AND）。
+
+2. **詞數過多會回 0 篇**：實測
+   `urinary retention cost economic burden` → 有結果
+   `... + healthcare expenditure` → 0 篇
+   `urinary retention unmet need limitations failure` → 0 篇
+   → **每個查詢控制在 3-4 個詞**。
+
+3. 「未滿足需求」這類抽象概念檢索效益差，
+   改以「現行治療的併發症／失敗率」切入更實際。
+
+### 10. WHO GHO / World Bank（全球比較）
+
+- WHO：`https://ghoapi.azureedge.net/api/{IndicatorCode}`
+  OData 語法需 URL 編碼，否則 `InvalidURL: control characters`
+- World Bank：`https://api.worldbank.org/v2/country/{iso}/indicator/{code}`
+- **兩者都沒有台灣資料**（台灣非會員國）。
+  台灣數字必須走衛福部統計處與國健署。
+
+### 11. 衛福部統計處（台灣）
+
+- `https://dep.mohw.gov.tw/DOS/` 可用
+- 死因統計頁 `np-5068-113.html` 內含 `dl-` 連結清單
+- **`dl-` 連結回傳的是真實檔案**（實測某檔為 2.2 MB PDF），
+  可直接下載
+
+### 12. 健保署（台灣，需代理繞道）
+
+- `https://www.nhi.gov.tw/` **全站對程式化請求回 403**
+- 實測 `https://r.jina.ai/` 前綴可成功取得內容
+- 這是繞道方案，非官方 API，穩定性較差 → 已做優雅降級
+- 台灣商品化的關鍵門檻是**健保特材給付**，比 FDA 更直接影響
+  醫院採購意願
+
+### 13. 國健署（台灣）
+
+- `https://www.hpa.gov.tw/` 可用
+- 含國民健康訪問調查、健康促進統計年報
+
 ## 二、已確認不可用（勿再嘗試）
 
 | 來源 | 實測結果 | 備註 |
