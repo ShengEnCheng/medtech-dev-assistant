@@ -600,12 +600,146 @@ if rep:
                 with st.expander("時序原則（論文發表 vs 專利申請）"):
                     st.markdown(pp.order_note)
 
-                st.caption(
-                    "**本模組不做法律判斷**。是否真的構成新穎性障礙，"
-                    "需比對申請專利範圍與論文的實際技術揭露內容，"
-                    "屬專利師專業範圍。本模組只提供論文清單、發表日期"
-                    "與法源對照。"
-                )
+            # ---------------- 作者／機構層級查詢（手動） ----------------
+            st.markdown("---")
+            st.markdown("### 指定作者或學校查詢")
+            st.caption(
+                "自動檢索只涵蓋長庚體系。若團隊成員來自其他學校或業界，"
+                "可在這裡指定**作者姓名**或**學校**，查他們發表過的論文。"
+            )
+
+            from src import source_authors as _sa
+
+            mode = st.radio(
+                "查詢方式",
+                ["依作者姓名", "依學校"],
+                horizontal=True, key="paper_mode")
+
+            if mode == "依作者姓名":
+                c1, c2 = st.columns([2, 2])
+                with c1:
+                    aname = st.text_input(
+                        "作者姓名（英文，例如 Yung-Chun Chang）",
+                        placeholder="Yung-Chun Chang",
+                        key="paper_author")
+                with c2:
+                    insts = _sa.taiwan_institutions()
+                    inst_choice = st.selectbox(
+                        "所屬機構（強烈建議填，可大幅降低同名誤判）",
+                        ["（不指定）"] + list(insts),
+                        key="paper_author_inst")
+
+                if aname.strip():
+                    ror = (None if inst_choice == "（不指定）"
+                           else insts.get(inst_choice))
+                    with st.spinner("查詢作者候選人…"):
+                        cands = _sa.find_authors(
+                            aname.strip(), limit=10, institution_ror=ror)
+
+                    if not cands:
+                        st.warning("查無作者，請確認英文拼法或先指定機構。")
+                    else:
+                        st.warning(
+                            "**台灣姓名英譯重複率極高**，同一個名字常對應多人。"
+                            "請從下表挑選正確的人（比對機構與著作數），"
+                            "系統不會自動認定。"
+                        )
+                        st.dataframe(
+                            [{"編號": i,
+                              "姓名": c["name"],
+                              "機構": "、".join(c["institutions"][:2]),
+                              "著作數": c["works"],
+                              "h 指數": c["h_index"],
+                              "ORCID": c["orcid"]}
+                             for i, c in enumerate(cands)],
+                            width="stretch", hide_index=True)
+
+                        sel = st.selectbox(
+                            "選擇正確的作者",
+                            list(range(len(cands))),
+                            format_func=lambda i: (
+                                f"{cands[i]['name']}｜"
+                                f"{'、'.join(cands[i]['institutions'][:1])}｜"
+                                f"{cands[i]['works']} 篇"),
+                            key="paper_author_sel")
+
+                        use_topic = st.checkbox(
+                            f"只顯示與「{pp.query}」相關的著作",
+                            value=True, key="paper_author_topic")
+
+                        if st.button("查他的著作", key="paper_author_go"):
+                            with st.spinner("查詢著作…"):
+                                works = _sa.author_works(
+                                    cands[sel]["id"],
+                                    topic=pp.query if use_topic else None,
+                                    limit=20)
+                            if not works:
+                                st.info("此作者在此主題上查無著作（換個主題或"
+                                        "取消主題篩選試試）。")
+                            else:
+                                st.success(f"共 {len(works)} 篇")
+                                st.dataframe(
+                                    [{"型別": w["type_label"],
+                                      "標題": w["title"][:80],
+                                      "公開日": w["date"],
+                                      "期刊": w["venue"][:32],
+                                      "引用": w["cites"],
+                                      "版本數": w.get("versions", 1)}
+                                     for w in works],
+                                    width="stretch", hide_index=True)
+                                st.caption(
+                                    "公開日已取**最早版本**（預印本可能比正式"
+                                    "刊登早 6-12 個月）。版本數大於 1 表示"
+                                    "同一篇有多個公開管道。"
+                                )
+                                early = [w for w in works if w["date"]][:1]
+                                if early:
+                                    st.info(
+                                        f"最早一篇公開日 **{early[0]['date']}**"
+                                        f"：{early[0]['title'][:60]}\n\n"
+                                        "若這篇揭露了擬申請的技術特徵，"
+                                        "優惠期即從這一天起算。"
+                                    )
+
+            else:  # 依學校
+                insts = _sa.taiwan_institutions()
+                picked_schools = st.multiselect(
+                    "選擇學校／機構（可多選）",
+                    list(insts),
+                    default=["長庚大學", "國立臺灣大學"],
+                    key="paper_schools")
+                if picked_schools and st.button("查這些學校的論文",
+                                                key="paper_school_go"):
+                    with st.spinner("查詢各校論文…"):
+                        rows = _sa.multi_institution_check(
+                            pp.query,
+                            [insts[s] for s in picked_schools],
+                            per_inst=8)
+                    if not rows:
+                        st.info("此主題在各校查無論文。")
+                    else:
+                        st.success(f"共 {len(rows)} 篇")
+                        st.dataframe(
+                            [{"機構": x.get("institution", ""),
+                              "型別": x.get("type_label", ""),
+                              "標題": (x.get("title") or "")[:78],
+                              "公開日": x.get("date", ""),
+                              "期刊": (x.get("venue") or "")[:30],
+                              "引用": x.get("cites", 0)}
+                             for x in rows],
+                            width="stretch", hide_index=True)
+                        st.caption(
+                            "這裡列出的是**各校在主題上的成果**。"
+                            "若某篇的作者正好是團隊成員，該篇即為己方先前技術，"
+                            "須優先確認。"
+                        )
+
+            st.caption(
+                "**本模組不做法律判斷**。是否真的構成新穎性障礙，"
+                "需比對申請專利範圍與論文的實際技術揭露內容，"
+                "屬專利師專業範圍。本模組只提供論文清單、發表日期"
+                "與法源對照。"
+            )
         idx += 1
 
     with tabs[idx]:
