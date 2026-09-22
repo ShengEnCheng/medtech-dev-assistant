@@ -87,8 +87,15 @@ def analyze(product_description: str,
     sources = ["TFDA 醫材許可證資料集（食藥署開放資料）"]
     if "regulatory" in modules:
         sources += ["openFDA 510(k)", "openFDA Classification"]
+    if "competitor" in modules:
+        sources += ["openFDA UDI", "openFDA 製造廠登記", "openFDA PMA",
+                    "openFDA 召回"]
+        if rep.competitor.market_rows:
+            sources.append(f"UN Comtrade {rep.competitor.market_year}")
+        if rep.competitor.health_spending:
+            sources.append("World Bank")
     if "patent" in modules:
-        sources += ["FreePatentsOnline", "Google Patents"]
+        sources += ["FreePatentsOnline（US/EP/WO/JP/DE）"]
     rep.sources = sources
 
     return rep

@@ -94,37 +94,125 @@ def _competitor_section(report: Report) -> str:
     c = report.competitor
     L: list[str] = []
     A = L.append
-    A("## 二、競品與市場地景")
+    A("## 二、競品與市場地景（全球）")
     A("")
     if c.taiwan_relaxed:
-        A("")
         A(f"> 注意：中文檢索詞「{c.tfda_query}」嚴格比對無結果，"
-          "已放寬比對條件，廠商清單可能包含不相關品項，請人工確認。")
+          "已放寬比對條件，台灣廠商清單可能包含不相關品項，請人工確認。")
         A("")
+
+    # --- 總覽 ---
+    A(f"**競爭密度**：{c.density}")
     A("")
-    A(f"**台灣取證總件數**：{c.taiwan_total}　|　**競爭密度**：{c.density}")
-    used = "、".join(c.tfda_used_terms) if c.tfda_used_terms else c.tfda_query
-    A(f"　（實際使用檢索詞「{used}」）")
-    if c.taiwan_licensees_sample and c.taiwan_licensees_sample < c.taiwan_total:
-        A("")
-        A(f"（廠商分群抽樣 {c.taiwan_licensees_sample} 筆，總件數為全庫統計）")
+    A("| 構面 | 數據 | 來源 |")
+    A("|---|---|---|")
+    A(f"| 台灣已取證件數 | {c.taiwan_total} | TFDA 許可證資料集 |")
+    if c.udi_total is not None:
+        A(f"| 全球已上市器材 | {c.udi_total:,} | openFDA UDI |")
+    if c.manufacturer_total is not None:
+        A(f"| 全球登記製造廠 | {c.manufacturer_total:,} | openFDA 製造廠登記 |")
+    if c.pma_total:
+        A(f"| 美國高風險核准（PMA） | {c.pma_total:,} | openFDA PMA |")
+    if c.recall_total:
+        A(f"| 召回紀錄 | {c.recall_total:,} | openFDA 召回 |")
+    if c.market_total_usd:
+        A(f"| 主要市場進口總額 | {c.market_total_usd/1e9:.1f} 十億美元 | "
+          f"UN Comtrade {c.market_year}（HS {c.market_hs}） |")
     A("")
+
+    # --- 台灣 ---
     if c.taiwan_licensees:
-        A("**台灣已取證廠商（前 10）**")
+        used = "、".join(c.tfda_used_terms) if c.tfda_used_terms else c.tfda_query
+        A(f"### 台灣已取證廠商（檢索詞「{used}」）")
         A("")
         A("| 申請商 | 許可證件數 | 醫器主類別 |")
         A("|---|---|---|")
-        for x in c.taiwan_licensees[:10]:
+        for x in c.taiwan_licensees[:12]:
             A(f"| {x.applicant} | {x.license_count} | {'、'.join(x.categories[:2])} |")
         A("")
+
+    # --- 全球品牌商 ---
     if c.international:
-        A("**國際競品（510(k) 取證件數）**")
+        term = f"（檢索詞「{c.udi_matched_term}」）" if c.udi_matched_term else ""
+        A(f"### 全球主要品牌商{term}")
         A("")
-        A("| 申請人 | 件數 | 最近取證 |")
+        A("| 公司 | 在庫品項數 | 樣本產品 |")
         A("|---|---|---|")
-        for x in c.international[:10]:
-            A(f"| {x.applicant} | {x.clearance_count} | {x.latest_clearance} |")
+        for x in c.international[:15]:
+            samp = (x.samples[0][:45] if x.samples else "—")
+            A(f"| {x.applicant} | {x.clearance_count} | {samp} |")
         A("")
+
+    # --- 全球製造國分布 ---
+    if c.manufacturer_countries:
+        A("### 全球製造廠國別分布")
+        A("")
+        A("| 國家 | 登記廠數 | 樣本廠商 |")
+        A("|---|---|---|")
+        for x in c.manufacturer_countries[:15]:
+            samp = (x.get("samples") or ["—"])[0][:40]
+            A(f"| {x.get('country','')} | {x.get('count',0)} | {samp} |")
+        A("")
+
+    # --- 高風險器材 ---
+    if c.pma_entries:
+        A(f"### 美國高風險器材核准（PMA，共 {c.pma_total or len(c.pma_entries)} 筆）")
+        A("")
+        A("> 有 PMA 紀錄代表此類產品在美國屬 Class III 最高風險等級，"
+          "需臨床證據，法規門檻與成本最高。")
+        A("")
+        A("| PMA 編號 | 申請人 | 產品名 |")
+        A("|---|---|---|")
+        for x in c.pma_entries[:8]:
+            A(f"| {x.get('pma_number','')} | {x.get('applicant','')[:32]} | "
+              f"{x.get('trade_name','')[:50]} |")
+        A("")
+
+    # --- 召回紀錄（競品品質風險）---
+    if c.recall_firms:
+        A(f"### 競品召回紀錄（共 {c.recall_total or 0} 筆）")
+        A("")
+        A("> 同類產品若有召回，代表技術難度高或品管門檻高 —— "
+          "既是風險，也是訴求「更可靠設計」的切入機會。")
+        A("")
+        A("| 召回廠商 | 件數 |")
+        A("|---|---|")
+        for x in c.recall_firms[:10]:
+            A(f"| {x['firm']} | {x['count']} |")
+        A("")
+
+    # --- 全球市場規模 ---
+    if c.market_rows:
+        A(f"### 全球市場規模（UN Comtrade，{c.market_year}，HS {c.market_hs}）")
+        A("")
+        A(f"醫療儀器及用具主要進口國（HS {c.market_hs}）：")
+        A("")
+        A("| 國家 | 進口額（十億美元） |")
+        A("|---|---|")
+        for x in c.market_rows[:12]:
+            A(f"| {x.get('country','')} | {x.get('value_usd',0)/1e9:.2f} |")
+        A("")
+        A(f"**主要市場進口總額**：{c.market_total_usd/1e9:.1f} 十億美元")
+        A("")
+        A("> 此為主要市場的進口額加總，**不是**全球市場總值。"
+          "未涵蓋的國家與在地製造銷售不計入，屬保守下限。")
+        A("")
+    elif c.market_error:
+        A(f"### 全球市場規模")
+        A("")
+        A(f"（UN Comtrade 查詢未完成：{c.market_error}，可稍後重試）")
+        A("")
+
+    # --- 各國醫療支出 ---
+    if c.health_spending:
+        A("### 各國醫療支出（佔 GDP 比例，World Bank）")
+        A("")
+        A("| 國家 | 佔比 | 年度 |")
+        A("|---|---|---|")
+        for x in c.health_spending[:10]:
+            A(f"| {x.get('country','')} | {x.get('value_pct','')}% | {x.get('year','')} |")
+        A("")
+
     A(f"> {c.note}")
     A("")
     return "\n".join(L)
@@ -139,14 +227,29 @@ def _patent_section(report: Report) -> str:
     A(f"**檢索詞擴充**：{'、'.join(p.search_terms)}")
     A("")
     A(f"**使用來源**：{'、'.join(p.sources_used) or '—'}"
-      f"　|　**FPO 總命中**：{p.fpo_total_matches if p.fpo_total_matches else '未取得'}"
-      f"　|　**FPO 檢索頁數**：{p.max_page or '未取得'}"
-      f"　|　**Google Patents 命中**：{p.total_hits or '未取得'}")
+      f"　|　**總命中**：{p.fpo_total_matches if p.fpo_total_matches else '未取得'}"
+      f"　|　**檢索頁數**：{p.max_page or '未取得'}")
+    if p.offices_searched:
+        labels = {
+            "US": "美國", "USAPP": "美國申請案", "EP": "歐洲",
+            "WO": "PCT 國際", "JP": "日本", "DE": "德國",
+        }
+        A("")
+        A(f"**收錄專利局**：{'、'.join(labels.get(o, o) for o in p.offices_searched)}")
+        if p.office_counts:
+            A("")
+            A("| 專利局 | 本次檢索命中筆數 |")
+            A("|---|---|")
+            for o, n in sorted(p.office_counts.items(), key=lambda x: -x[1]):
+                A(f"| {labels.get(o, o)} | {n} |")
     A("")
-    if p.fpo_total_matches or p.total_hits:
+    if p.fpo_total_matches:
         A("> 檢索命中數為全文檢索的粗篩結果，**不是**相關專利件數；"
           "專利密度請看下方「高相關專利」件數。")
         A("")
+    A("> 未涵蓋台灣、中國、韓國專利局。台灣佈局需另查 TIPO，"
+      "中國需查 CNIPA，韓國需查 KIPRIS。")
+    A("")
     if p.high_risk:
         A(f"**高相關專利（依標題重疊度排序，列前 12 件／共 {len(p.high_risk)} 件）**")
         A("")

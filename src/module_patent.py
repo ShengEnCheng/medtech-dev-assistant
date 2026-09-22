@@ -34,27 +34,80 @@ from .schema import AssigneeGroup, PatentHit, PatentResult, TODAY
 FPO_SEARCH_URL = "https://www.freepatentsonline.com/result.html"
 GP_XHR_URL = "https://patents.google.com/xhr/query"
 
+# FreePatentsOnline 支援的專利局選項（實測確認，2026-09）
+# 這是本模組最重要的發現：FPO 不只美國專利，改參數就能涵蓋全球。
+# 實測「urinary catheter」各局命中數：
+#   US 27,057 ／ EP 27,129 ／ WO 64,470 ／ JP 24,233 ／ DE 2,645
+#   全部合併 81,064
+FPO_OFFICES: dict[str, str] = {
+    "US": "uspat=on",      # 美國核准專利
+    "USAPP": "usapp=on",   # 美國公開申請案
+    "EP": "eupat=on",      # 歐洲專利局
+    "WO": "wopat=on",      # PCT 國際專利
+    "JP": "jp=on",         # 日本
+    "DE": "depat=on",      # 德國
+}
 
-def _freepatentsonline(query: str, pages: int = 2) -> dict:
-    """FreePatentsOnline 檢索（HTML 爬取）。
+# 專利號格式 → 所屬專利局（用於解析結果）
+_OFFICE_PATTERNS: list[tuple[str, str]] = [
+    ("EP", r"\bEP\d{7}[AB]\d?\b"),
+    ("WO", r"\bWO\d{4}[/\s]?\d{6}[A-Z]?\d?\b"),
+    ("JP", r"\bJP\d{7,12}[A-Z]?\b"),
+    ("DE", r"\bDE\d{7,12}[A-Z]\d?\b"),
+    ("GB", r"\bGB\d{7,12}[A-Z]?\b"),
+    ("FR", r"\bFR\d{7,12}[A-Z]?\b"),
+    ("CN", r"\bCN\d{6,12}[A-Z]?\b"),
+    ("KR", r"\bKR\d{7,12}[A-Z]?\b"),
+    ("US", r"\bUS\d{7,11}(?:[A-Z]\d?)?\b"),
+]
+
+
+def _fpo_office_string(offices: list[str] | None) -> str:
+    """組合 FPO 的專利局參數。預設全部（全球）。"""
+    if not offices:
+        offices = list(FPO_OFFICES)
+    parts = [FPO_OFFICES[o] for o in offices if o in FPO_OFFICES]
+    if not parts:
+        parts = [FPO_OFFICES["US"]]
+    return "&".join(parts)
+
+
+def _detect_offices(html: str) -> dict[str, list[str]]:
+    """由結果頁統計各專利局的號碼（判斷涵蓋範圍）。"""
+    found: dict[str, list[str]] = {}
+    for label, pat in _OFFICE_PATTERNS:
+        hits = list(dict.fromkeys(re.findall(pat, html)))
+        if hits:
+            found[label] = hits
+    return found
+
+
+def _freepatentsonline(query: str, pages: int = 2,
+                       offices: list[str] | None = None) -> dict:
+    """FreePatentsOnline 檢索（HTML 爬取，支援全球六大專利局）。
 
     URL 格式注意（實測踩到的坑）：
-    1. 必須用 query_txt=...&submit=&patents=on&p=N
-       用 result.html?p=N 的簡寫會被擋。
-    2. 站上的分頁連結格式是 p=N 在前、query_txt 在後
-       （result.html?p=2&query_txt=...），與請求時的順序相反，
-       所以抓頁數的正規表示式不能假設 query_txt 在前。
-    3. 頁間需間隔 4 秒以上（該站有速率限制），並配合退避重試。
+    1. 必須用 query_txt=...&submit=&<專利局參數>&p=N。
+    2. 站上分頁連結格式是 p=N 在前、query_txt 在後，
+       與請求時的順序相反，抓頁數的正規表示式不能假設 query_txt 在前。
+    3. 頁間與請求間需間隔，該站有嚴格的速率限制：
+       實測連續請求會 Connection reset by peer，需 10-12 秒退避。
     4. 總命中數在 "Matches 1 - 50 out of 4059" 這種字串裡。
+    5. 專利局參數預設全部（全球）；只給 US 會漏掉 EP/WO/JP/DE。
+
+    實測「urinary catheter」涵蓋度：US 27,057 ／ EP 27,129 ／
+    WO 64,470 ／ JP 24,233 ／ DE 2,645，合併 81,064。
     """
     hits: list[PatentHit] = []
     max_page = 0
     total_matches: int | None = None
+    office_counts: dict[str, int] = {}
     q = query.replace(" ", "+")
+    ofc = _fpo_office_string(offices)
 
     for page in range(1, pages + 1):
-        url = f"{FPO_SEARCH_URL}?query_txt={q}&submit=&patents=on&p={page}"
-        body = get_with_retry(url, retries=4, base_delay=4.0, min_bytes=5000)
+        url = f"{FPO_SEARCH_URL}?query_txt={q}&submit=&{ofc}&p={page}"
+        body = get_with_retry(url, retries=4, base_delay=10.0, min_bytes=5000)
         if not body:
             continue
 
@@ -62,6 +115,10 @@ def _freepatentsonline(query: str, pages: int = 2) -> dict:
             tm = re.search(r"Matches[\s\S]{0,40}?out of\s*([\d,]+)", body, flags=re.I)
             if tm:
                 total_matches = int(tm.group(1).replace(",", ""))
+
+        # 統計本次結果涵蓋的專利局（供報告說明全球覆蓋範圍）
+        for label, docs in _detect_offices(body).items():
+            office_counts[label] = max(office_counts.get(label, 0), len(docs))
 
         # 分頁連結：p=N 在前（站上格式與請求格式順序相反）
         for m in re.finditer(r"result\.html\?p=(\d+)&amp;query_txt=", body):
@@ -90,7 +147,7 @@ def _freepatentsonline(query: str, pages: int = 2) -> dict:
                 url=f"https://www.freepatentsonline.com/{doc}.html",
             ))
         if page < pages:
-            time.sleep(4.0)
+            time.sleep(10.0)
 
     seen: set[str] = set()
     uniq: list[PatentHit] = []
@@ -99,7 +156,8 @@ def _freepatentsonline(query: str, pages: int = 2) -> dict:
             continue
         seen.add(h.document)
         uniq.append(h)
-    return {"max_page": max_page, "hits": uniq, "total_matches": total_matches}
+    return {"max_page": max_page, "hits": uniq, "total_matches": total_matches,
+            "office_counts": office_counts, "offices": offices or list(FPO_OFFICES)}
 
 
 def _google_patents(query: str, limit: int = 25) -> dict:
@@ -132,21 +190,31 @@ def _google_patents(query: str, limit: int = 25) -> dict:
     }
 
 
-def run(device_query: str, pages: int = 2, include_google: bool = True) -> PatentResult:
+def run(device_query: str, pages: int = 2, include_google: bool = False,
+        offices: list[str] | None = None) -> PatentResult:
+    """執行專利檢索。
+
+    include_google 預設 False：Google Patents xhr 實測持續 503
+    （連 HTML 首頁都掛，確認非 IP 問題），已不可用。
+    保留參數是為了將來若恢復時可快速啟用。
+
+    offices 預設 None → 全部專利局（US/EP/WO/JP/DE），
+    涵蓋全球；只給 ["US"] 會退回單一美國市場。
+    """
     out = PatentResult(query=device_query, query_date=TODAY)
     out.search_terms = expand_patent_terms(device_query)
 
-    # 主來源：FreePatentsOnline
-    fpo_pages_real = 0
+    # 主來源：FreePatentsOnline（支援全球六大專利局）
     fpo_total = None
     try:
-        fpo = _freepatentsonline(device_query, pages=pages)
+        fpo = _freepatentsonline(device_query, pages=pages, offices=offices)
         out.hits = fpo["hits"]
         out.max_page = fpo["max_page"]
-        fpo_pages_real = fpo["max_page"]
         fpo_total = fpo.get("total_matches")
+        out.offices_searched = fpo.get("offices") or []
+        out.office_counts = fpo.get("office_counts") or {}
         if fpo["hits"]:
-            out.sources_used.append("FreePatentsOnline")
+            out.sources_used.append("FreePatentsOnline（全球多局）")
         # 風險標記：標題與檢索詞的重疊度
         terms = [w.lower() for w in device_query.replace("-", " ").split() if len(w) > 3]
         for h in fpo["hits"]:
@@ -160,7 +228,8 @@ def run(device_query: str, pages: int = 2, include_google: bool = True) -> Paten
     except Exception as exc:
         out.errors.append({"source": "FreePatentsOnline", "error": str(exc)})
 
-    # 次要來源：Google Patents（assignee 分群）
+    # Google Patents 已於 2026-09 實測確認全面失效（含 HTML 首頁皆 503）
+    # 預設不呼叫；需要 assignee 分群時改用付費資料庫或人工查詢
     if include_google:
         try:
             gp = _google_patents(device_query)
@@ -170,9 +239,10 @@ def run(device_query: str, pages: int = 2, include_google: bool = True) -> Paten
                 out.sources_used.append("Google Patents")
         except Exception as exc:
             out.errors.append({
-                "source": "Google Patents",
-                "error": str(exc),
-                "note": "非官方端點，實測常回 503；assignee 分群可改用人工查詢",
+                "source": "Google Patents（已停用）",
+                "error": str(exc)[:100],
+                "note": "2026-09 實測確認失效：xhr 與 HTML 頁面皆回 503。"
+                        "申請人分群請改用付費專利資料庫或人工查詢。",
             })
 
     out.degraded = not (out.hits or out.assignees)

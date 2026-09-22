@@ -77,6 +77,17 @@ class InternationalCompetitor:
     applicant: str = ""
     clearance_count: int = 0
     latest_clearance: str = ""
+    samples: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RecallEntry:
+    firm: str = ""
+    product: str = ""
+    classification: str = ""
+    reason: str = ""
+    date: str = ""
+    country: str = ""
 
 
 @dataclass
@@ -90,7 +101,27 @@ class CompetitorResult:
     taiwan_relaxed: bool = False
     taiwan_licensees: list[LicenseeGroup] = field(default_factory=list)
     international: list[InternationalCompetitor] = field(default_factory=list)
-    patent_total: int | None = None
+
+    # --- 全球資料（openFDA UDI / registrationlisting / PMA / enforcement）---
+    udi_total: int | None = None
+    udi_matched_term: str = ""
+    global_companies: list[dict] = field(default_factory=list)
+    manufacturer_total: int | None = None
+    manufacturer_countries: list[dict] = field(default_factory=list)
+    pma_total: int | None = None
+    pma_entries: list[dict] = field(default_factory=list)
+    recall_total: int | None = None
+    recall_firms: list[dict] = field(default_factory=list)
+    recall_entries: list[RecallEntry] = field(default_factory=list)
+
+    # --- 市場規模（UN Comtrade / World Bank）---
+    market_hs: str = "9018"
+    market_year: int = 2022
+    market_total_usd: float = 0.0
+    market_rows: list[dict] = field(default_factory=list)
+    market_error: str = ""
+    health_spending: list[dict] = field(default_factory=list)
+
     density: str = ""
     note: str = "基於公開資料，不構成市占率或市場規模結論。"
     errors: list[dict] = field(default_factory=list)
@@ -123,13 +154,19 @@ class PatentResult:
     max_page: int = 0
     total_hits: int | None = None
     fpo_total_matches: int | None = None
+    offices_searched: list[str] = field(default_factory=list)
+    office_counts: dict = field(default_factory=dict)
     assignees: list[AssigneeGroup] = field(default_factory=list)
     hits: list[PatentHit] = field(default_factory=list)
     high_risk: list[PatentHit] = field(default_factory=list)
     to_confirm: list[str] = field(default_factory=list)
     degraded: bool = False
     errors: list[dict] = field(default_factory=list)
-    disclaimer: str = "非正式 FTO 檢索，正式檢索請委由專利師。專利狀態以官方專利局為準。"
+    disclaimer: str = (
+        "非正式 FTO 檢索，正式檢索請委由專利師。專利狀態以官方專利局為準。"
+        "收錄範圍為 US/EP/WO/JP/DE 等主要專利局（依實測可查者），"
+        "未涵蓋台灣、中國、韓國等局，區域佈局需另查各國專利局。"
+    )
 
 
 @dataclass

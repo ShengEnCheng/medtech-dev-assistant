@@ -201,9 +201,32 @@ if rep:
         with tabs[idx]:
             c = rep.competitor
             st.info(f"**競爭密度**：{c.density}")
+
+            # 全球總覽指標
+            ov = [{"構面": "台灣已取證件數", "數據": f"{c.taiwan_total}",
+                   "來源": "TFDA 許可證資料集"}]
+            if c.udi_total is not None:
+                ov.append({"構面": "全球已上市器材", "數據": f"{c.udi_total:,}",
+                           "來源": "openFDA UDI"})
+            if c.manufacturer_total is not None:
+                ov.append({"構面": "全球登記製造廠", "數據": f"{c.manufacturer_total:,}",
+                           "來源": "openFDA 製造廠登記"})
+            if c.pma_total:
+                ov.append({"構面": "美國高風險核准（PMA）", "數據": f"{c.pma_total:,}",
+                           "來源": "openFDA PMA"})
+            if c.recall_total:
+                ov.append({"構面": "競品召回紀錄", "數據": f"{c.recall_total:,}",
+                           "來源": "openFDA 召回"})
+            if c.market_total_usd:
+                ov.append({"構面": "主要市場進口總額",
+                           "數據": f"{c.market_total_usd/1e9:.1f} 十億美元",
+                           "來源": f"UN Comtrade {c.market_year}"})
+            st.dataframe(ov, width="stretch", hide_index=True)
+
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("**台灣已取證廠商**")
+                used = "、".join(c.tfda_used_terms) if c.tfda_used_terms else c.tfda_query
+                st.markdown(f"**台灣已取證廠商**（檢索詞「{used}」）")
                 if c.taiwan_licensees:
                     st.dataframe(
                         [{"申請商": x.applicant, "件數": x.license_count,
@@ -213,15 +236,67 @@ if rep:
                 else:
                     st.caption("未檢索到對應產品")
             with c2:
-                st.markdown("**國際競品（510(k)）**")
+                st.markdown("**全球主要品牌商**")
                 if c.international:
                     st.dataframe(
-                        [{"申請人": x.applicant, "件數": x.clearance_count,
-                          "最近取證": x.latest_clearance}
+                        [{"公司": x.applicant, "品項數": x.clearance_count,
+                          "樣本產品": (x.samples[0][:40] if x.samples else "—")}
                          for x in c.international],
                         width="stretch", hide_index=True)
                 else:
                     st.caption("未檢索到對應產品")
+
+            g1, g2 = st.columns(2)
+            with g1:
+                st.markdown("**全球製造廠國別分布**")
+                if c.manufacturer_countries:
+                    st.dataframe(
+                        [{"國家": x.get("country", ""), "登記廠數": x.get("count", 0)}
+                         for x in c.manufacturer_countries],
+                        width="stretch", hide_index=True)
+                else:
+                    st.caption("未取得")
+            with g2:
+                st.markdown(f"**全球市場規模**（HS {c.market_hs}，{c.market_year}）")
+                if c.market_rows:
+                    st.dataframe(
+                        [{"國家": x.get("country", ""),
+                          "進口額（十億美元）":
+                              round((x.get("value_usd") or 0) / 1e9, 2)}
+                         for x in c.market_rows[:10]],
+                        width="stretch", hide_index=True)
+                else:
+                    st.caption(f"未取得（{c.market_error or '—'}）")
+
+            if c.pma_entries:
+                with st.expander(f"美國高風險器材核准（PMA，共 {c.pma_total} 筆）"):
+                    st.caption("有 PMA 紀錄代表此類產品在美國屬 Class III "
+                               "最高風險等級，需臨床證據。")
+                    st.dataframe(
+                        [{"PMA 編號": x.get("pma_number", ""),
+                          "申請人": x.get("applicant", ""),
+                          "產品名": x.get("trade_name", "")}
+                         for x in c.pma_entries],
+                        width="stretch", hide_index=True)
+
+            if c.recall_firms:
+                with st.expander(f"競品召回紀錄（共 {c.recall_total} 筆）"):
+                    st.caption("同類產品若有召回，代表技術難度高或品管門檻高 —— "
+                               "既是風險，也是訴求「更可靠設計」的切入機會。")
+                    st.dataframe(
+                        [{"召回廠商": x["firm"], "件數": x["count"]}
+                         for x in c.recall_firms],
+                        width="stretch", hide_index=True)
+
+            if c.health_spending:
+                with st.expander("各國醫療支出（佔 GDP 比例，World Bank）"):
+                    st.dataframe(
+                        [{"國家": x.get("country", ""),
+                          "佔比": f"{x.get('value_pct','')}%",
+                          "年度": x.get("year", "")}
+                         for x in c.health_spending],
+                        width="stretch", hide_index=True)
+
             st.caption(c.note)
         idx += 1
 
@@ -230,8 +305,20 @@ if rep:
             p = rep.patent
             st.caption(f"檢索詞擴充：{'、'.join(p.search_terms)}")
             st.caption(f"來源：{'、'.join(p.sources_used) or '—'}　"
-                       f"FPO 頁數：{p.max_page or '—'}　"
-                       f"Google Patents 命中：{p.total_hits or '未取得'}")
+                       f"檢索頁數：{p.max_page or '—'}")
+            if p.offices_searched:
+                labels = {"US": "美國", "USAPP": "美國申請案", "EP": "歐洲",
+                          "WO": "PCT 國際", "JP": "日本", "DE": "德國"}
+                st.success("**收錄專利局**："
+                           + "、".join(labels.get(o, o) for o in p.offices_searched))
+                if p.office_counts:
+                    st.dataframe(
+                        [{"專利局": labels.get(o, o), "本次命中筆數": n}
+                         for o, n in sorted(p.office_counts.items(),
+                                            key=lambda x: -x[1])],
+                        width="stretch", hide_index=True)
+                st.caption("未涵蓋台灣、中國、韓國專利局。"
+                           "台灣佈局需另查 TIPO，中國需查 CNIPA，韓國需查 KIPRIS。")
             if p.high_risk:
                 st.markdown(f"**高相關專利（共 {len(p.high_risk)} 件）**")
                 st.dataframe(

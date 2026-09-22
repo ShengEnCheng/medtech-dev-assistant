@@ -95,13 +95,33 @@ medtech-dev-assistant/
 
 ## 資料來源
 
-| 來源 | 用途 | 穩定性 |
-|------|------|--------|
-| openFDA Classification | 法規分類初判（device_class、法規編號） | 高（官方 API） |
-| openFDA 510(k) | 前導裝置、國際競品 | 高（官方 API） |
-| TFDA 醫材許可證資料集 | 台灣競品名單（**最有價值**） | 高（官方資料集，本地索引） |
-| FreePatentsOnline | 專利檢索主來源 | 中（HTML 爬取，有速率限制） |
-| Google Patents xhr | assignee 分群（次要） | 低（非官方，實測易 503） |
+### 台灣
+| 來源 | 用途 | 筆數 |
+|------|------|------|
+| TFDA 醫材許可證資料集 | 台灣已取證廠商與品名（**本地索引**） | 104,680 |
+
+### 全球
+| 來源 | 用途 | 筆數 |
+|------|------|------|
+| openFDA UDI | 全球已上市器材、品牌商 | 267,842 |
+| openFDA 製造廠登記 | 全球製造廠分布（41 國） | 335,224 |
+| openFDA PMA | 美國高風險器材（Class III） | 4,252 |
+| openFDA 510(k) | 前導裝置、法規比對 | 14 萬+ |
+| openFDA 召回 | 競品品質風險訊號 | 2,617 |
+| openFDA 分類 | 法規分類與路徑 | 6 千+ |
+| UN Comtrade | 各國醫材進口額（市場規模） | HS 9018，2022 |
+| World Bank | 各國醫療支出佔 GDP | 各國年度 |
+| FreePatentsOnline | 專利檢索（**US/EP/WO/JP/DE 五大局**） | 依檢索詞 |
+
+### 已知無法使用（勿再嘗試）
+| 來源 | 狀況 |
+|------|------|
+| Google Patents | 2026-09 實測全面 503（含 HTML 首頁），已停用 |
+| EPO OPS | HTTP 403，需註冊 API key（免費但需申請） |
+| Lens.org | HTTP 401/403，需 API key |
+| EUDAMED | Angular SPA，前端路徑無法取得後端 API |
+| WIPO PATENTSCOPE | JSF 表單，可取得結果數但無法抓取清單 |
+| DEPATISnet | 有 TSPD 反爬保護，需 JS 執行環境 |
 
 詳細端點、實測數據與已知限制見 `docs/SOURCES.md`。
 
