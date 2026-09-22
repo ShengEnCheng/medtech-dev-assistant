@@ -60,6 +60,42 @@ with st.sidebar:
                     st.error(f"建立失敗：{exc}")
 
     st.markdown("---")
+    st.markdown("### 資料新鮮度")
+    from src import freshness
+    fresh = freshness.freshness_report(TFDA_DB)
+    if fresh:
+        st.dataframe(
+            [{"來源": x["name"],
+              "類型": x["kind"],
+              "資料日期": str(x.get("date") or "—"),
+              "落後(天)": (str(x["lag_days"])
+                           if x.get("lag_days") is not None else "—")}
+             for x in fresh],
+            width="stretch", hide_index=True)
+    st.caption(
+        "**即時**＝每次查詢都取最新；**快取**＝需更新才會反映。 "
+        "即時來源的落後天數來自官方開放資料本身的更新週期。"
+    )
+
+    with st.expander("TFDA 索引更新"):
+        src_date = freshness.tfda_local_date(TFDA_DB)
+        built = freshness.tfda_built_at(TFDA_DB)
+        st.caption(f"官方資料日期：{src_date or '未記錄'}")
+        st.caption(f"本地建立時間：{built or '未知'}")
+        if st.button("檢查官方是否已更新", width="stretch"):
+            with st.spinner("下載官方資料集比對（約 16 MB）…"):
+                rem = freshness.tfda_remote_date()
+                stt = freshness.tfda_needs_update(TFDA_DB, rem)
+                if not rem.get("date"):
+                    st.error(f"取得官方日期失敗：{rem.get('error','')}")
+                elif stt["needs_update"]:
+                    st.warning(f"需要更新 — {stt['reason']}")
+                else:
+                    st.success(f"已是最新 — {stt['reason']}")
+                st.caption(f"官方日期：{rem.get('date') or '—'}")
+        st.caption("重新建立請執行：`python -m src.build_tfda_index --force`")
+
+    st.markdown("---")
     st.markdown("### 外部資料源")
     from src import source_epo
     epo = source_epo.status()
@@ -231,14 +267,61 @@ if rep:
                                 f"({a.get('url','')}) "
                                 f"— {a.get('journal','')} ({a.get('date','')})")
 
+                # --- 由上而下市場推估計算機（Biodesign 官方方法）---
+                st.markdown("**由上而下市場推估**（Biodesign 官方方法）")
+                st.caption("目標人口 × 盛行率 × 就醫比例 × 每人年花費。"
+                           "每個比例都要能追溯到來源，否則只是數字堆疊。")
+                with st.form("market_calc"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        pop = st.number_input(
+                            "目標人口（人數）", min_value=0.0,
+                            value=float(st.session_state.get("mk_pop", 0.0)),
+                            step=10000.0, format="%.0f")
+                        prev = st.number_input(
+                            "盛行率（%）", min_value=0.0, max_value=100.0,
+                            value=float(st.session_state.get("mk_prev", 0.0)),
+                            step=0.5)
+                    with c2:
+                        seek = st.number_input(
+                            "就醫／接受處置比例（%）", min_value=0.0,
+                            max_value=100.0,
+                            value=float(st.session_state.get("mk_seek", 0.0)),
+                            step=1.0)
+                        spend = st.number_input(
+                            "每人每年花費（美元）", min_value=0.0,
+                            value=float(st.session_state.get("mk_spend", 0.0)),
+                            step=50.0)
+                    submitted = st.form_submit_button(
+                        "計算", width="stretch")
+                if submitted:
+                    st.session_state["mk_pop"] = pop
+                    st.session_state["mk_prev"] = prev
+                    st.session_state["mk_seek"] = seek
+                    st.session_state["mk_spend"] = spend
+                    from src import source_burden as _sb
+                    calc = _sb.top_down_market(pop, prev, seek, spend)
+                    st.session_state["mk_calc"] = calc
+
+                calc = st.session_state.get("mk_calc")
+                if calc:
+                    for s in calc.get("steps", []):
+                        st.markdown(f"- {s}")
+                    st.metric("推估結果", f"US$ {calc.get('total_usd', 0):,}")
+                    st.caption(calc.get("caveat", ""))
+                    st.info(
+                        "**還需要「由下而上」**：各現有解法 × 使用人數 × 單價。"
+                        "兩者落差本身就是重要資訊，不是誤差"
+                        "（Biodesign 官方 xerostomia 案例：2.1B vs 206M）。"
+                    )
+
                 if b.market_calc:
                     mc = b.market_calc
-                    st.markdown("**由上而下市場推估（Biodesign 官方方法）**")
+                    st.markdown("**報告中已計算的推估值**")
                     for s in mc.get("steps", []):
                         st.markdown(f"- {s}")
                     st.metric("推估結果",
                               f"US$ {mc.get('total_usd', 0):,}")
-                    st.caption(mc.get("caveat", ""))
 
                 rb = b.reimbursement or {}
                 if rb.get("pages"):
