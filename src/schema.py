@@ -156,6 +156,8 @@ class PatentResult:
     fpo_total_matches: int | None = None
     offices_searched: list[str] = field(default_factory=list)
     office_counts: dict = field(default_factory=dict)
+    epo_assignees: list[dict] = field(default_factory=list)
+    epo_note: str = ""
     assignees: list[AssigneeGroup] = field(default_factory=list)
     hits: list[PatentHit] = field(default_factory=list)
     high_risk: list[PatentHit] = field(default_factory=list)

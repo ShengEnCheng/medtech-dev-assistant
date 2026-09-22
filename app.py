@@ -60,6 +60,19 @@ with st.sidebar:
                     st.error(f"建立失敗：{exc}")
 
     st.markdown("---")
+    st.markdown("### 外部資料源")
+    from src import source_epo
+    epo = source_epo.status()
+    if epo["configured"]:
+        st.success(f"EPO OPS 已連線\n\n{epo['message']}")
+    else:
+        st.info(
+            "**EPO OPS 未設定**\n\n"
+            "專利申請人分析需要 EPO 憑證。\n\n"
+            "申請方式見 `docs/EPO_SETUP.md`（免費）"
+        )
+
+    st.markdown("---")
     st.markdown("### 關於")
     st.caption(
         "本工具為早期探索輔助。專利為非正式 FTO 檢索、"

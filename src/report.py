@@ -258,13 +258,20 @@ def _patent_section(report: Report) -> str:
         for x in p.high_risk[:12]:
             A(f"| {x.document} | {x.title[:50]} | {x.risk} | [查閱]({x.url}) |")
         A("")
-    if p.assignees:
-        A("**主要專利佈局者（Google Patents）**")
+    if p.epo_assignees:
+        A(f"**主要專利佈局者**（EPO OPS，共 {len(p.epo_assignees)} 家）")
         A("")
-        A("| 申請人 | 件數 | 最近申請 |")
+        A("> 專利申請人分布回答「誰在這個領域佈局最密」。"
+          "佈局密集代表技術已被卡位，需評估迴避設計空間。")
+        A("")
+        A("| 申請人 | 專利件數 | 樣本專利 |")
         A("|---|---|---|")
-        for x in p.assignees[:8]:
-            A(f"| {x.assignee} | {x.count} | {x.latest or '—'} |")
+        for x in p.epo_assignees[:12]:
+            samp = (x.get("samples") or [""])[0][:48]
+            A(f"| {x['assignee'][:42]} | {x['count']} | {samp} |")
+        A("")
+    elif p.epo_note:
+        A(f"> {p.epo_note}")
         A("")
     if p.to_confirm:
         A("**待專業確認**")

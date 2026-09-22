@@ -29,6 +29,7 @@ import time
 
 from .http_client import get_json, get_with_retry
 from .query_terms import expand_patent_terms
+from . import source_epo
 from .schema import AssigneeGroup, PatentHit, PatentResult, TODAY
 
 FPO_SEARCH_URL = "https://www.freepatentsonline.com/result.html"
@@ -227,6 +228,35 @@ def run(device_query: str, pages: int = 2, include_google: bool = False,
         out.high_risk.sort(key=lambda x: -x.overlap_terms)
     except Exception as exc:
         out.errors.append({"source": "FreePatentsOnline", "error": str(exc)})
+
+    # EPO OPS — 補上 FPO 沒有的申請人（assignee）分析
+    # FPO 只給號碼與標題，無法回答「誰佈局最密」這個關鍵問題
+    try:
+        if source_epo.is_configured():
+            out.epo_assignees = source_epo.assignee_landscape(device_query, limit=100)
+            if out.epo_assignees:
+                out.sources_used.append("EPO OPS（申請人分析）")
+            # 同時把 assignee 併入 assignees 欄位（沿用舊顯示邏輯）
+            out.assignees = [
+                AssigneeGroup(
+                    assignee=a["assignee"],
+                    count=a["count"],
+                    latest="",
+                    samples=[{"title": s} for s in a.get("samples", [])],
+                )
+                for a in out.epo_assignees[:12]
+            ]
+        else:
+            out.epo_note = (
+                "未設定 EPO 憑證，無法取得專利申請人（assignee）分析。"
+                "申請免費 API key 後可補上「誰在此領域佈局最密」。"
+            )
+    except Exception as exc:
+        out.errors.append({
+            "source": "EPO OPS",
+            "error": str(exc)[:150],
+            "note": "EPO 憑證可能失效或配額用盡（免費每週 4 GB）",
+        })
 
     # Google Patents 已於 2026-09 實測確認全面失效（含 HTML 首頁皆 503）
     # 預設不呼叫；需要 assignee 分群時改用付費資料庫或人工查詢
