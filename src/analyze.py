@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from . import feedback, module_competitor, module_patent, module_regulatory, report as report_mod
+from . import (feedback, module_burden, module_competitor, module_patent,
+               module_regulatory, report as report_mod)
 from .query_terms import derive_device_query, derive_tfda_query, is_generic
 from .schema import (
     MODULE_LABELS,
     MODULE_ORDER,
+    BurdenResult,
     CompetitorResult,
     PatentResult,
     RegulatoryResult,
@@ -23,6 +25,7 @@ def analyze(product_description: str,
             modules: list[str] | None = None,
             device_query: str | None = None,
             tfda_query: str | None = None,
+            condition_query: str | None = None,
             need_statement: str | None = None,
             tfda_db: Path | None = None,
             progress=None) -> Report:
@@ -52,6 +55,14 @@ def analyze(product_description: str,
     def emit(msg: str) -> None:
         if progress:
             progress(step, total, msg)
+
+    if "burden" in modules:
+        step += 1
+        emit("疾病負擔與市場推估（約需 20-40 秒）…")
+        rep.burden = module_burden.run(
+            product_description, condition_override=condition_query)
+    else:
+        rep.burden = BurdenResult()
 
     if "regulatory" in modules:
         step += 1
@@ -85,6 +96,8 @@ def analyze(product_description: str,
 
     # 資料來源標註
     sources = ["TFDA 醫材許可證資料集（食藥署開放資料）"]
+    if "burden" in modules:
+        sources += ["PubMed（疾病負擔文獻）", "健保署（特材給付）"]
     if "regulatory" in modules:
         sources += ["openFDA 510(k)", "openFDA Classification"]
     if "competitor" in modules:

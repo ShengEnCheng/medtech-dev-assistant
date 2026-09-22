@@ -103,7 +103,8 @@ with col_left:
 
 with col_right:
     st.markdown("**選擇要產出的報告**")
-    st.caption("可只選一項，也可三項全選")
+    st.caption("可只選一項，也可全選。建議至少選「疾病負擔」，"
+               "那是 Biodesign 需求篩選的核心。")
     picked = []
     for m in MODULE_ORDER:
         if st.checkbox(MODULE_LABELS[m], value=True, key=f"mod_{m}"):
@@ -126,6 +127,15 @@ with col_right:
                 "若抽得不準，在這裡指定（例如「氣管內管」「導尿管」「尿布」）。"
             ),
         )
+        manual_cond = st.text_input(
+            "手動指定疾病檢索詞（英文）",
+            placeholder="urinary retention",
+            help=(
+                "疾病負擔用。PubMed 是英文資料庫，系統會從產品說明自動"
+                "對應疾病（例如「膀胱餘尿」→ urinary retention）。"
+                "若對得不準，在這裡指定。"
+            ),
+        )
         need = st.text_input("Need Statement（選填）", placeholder="")
 
     run = st.button("開始評估", type="primary", width="stretch",
@@ -144,6 +154,7 @@ if run:
             modules=picked,
             device_query=manual.strip() or None,
             tfda_query=manual_tw.strip() or None,
+            condition_query=manual_cond.strip() or None,
             need_statement=need.strip() or None,
             tfda_db=TFDA_DB if TFDA_DB.exists() else None,
             progress=progress,
@@ -170,11 +181,80 @@ if rep:
               len(rep.patent.high_risk) if "patent" in rep.modules_run else "—")
     cls = {c.device_class for c in rep.regulatory.classification if c.device_class}
     m4.metric("FDA 分類", "/".join(f"Class {c}" for c in sorted(cls)) if cls else "未取得")
+    if "burden" in rep.modules_run and rep.burden.condition:
+        n_nums = sum(len((d or {}).get("numbers") or [])
+                     for d in (rep.burden.sections or {}).values())
+        st.caption(f"疾病檢索詞：{rep.burden.condition}　|　"
+                   f"取得文獻量化數字 {n_nums} 筆")
 
     tabs = st.tabs(
-        [MODULE_LABELS[m] for m in rep.modules_run] + ["調整建議", "完整報告"]
+        [MODULE_LABELS[m] for m in rep.modules_run]
+        + ["調整建議", "待團隊補齊", "完整報告"]
     )
     idx = 0
+
+    if "burden" in rep.modules_run:
+        with tabs[idx]:
+            b = rep.burden
+            if not b.condition:
+                st.info(b.note or "未識別疾病檢索詞，未執行。"
+                        "可於「進階設定」手動指定（英文）。")
+            else:
+                st.caption(f"疾病／臨床狀態檢索詞：**{b.condition}**")
+                st.caption("以下數字為 PubMed 文獻摘要的原文引用，"
+                           "非本工具推算，需人工核對原始文獻。")
+
+                st.markdown("**文獻中的量化數字**")
+                any_num = False
+                for label in ["流行病學", "經濟負擔", "現行治療", "治療侷限"]:
+                    d = (b.sections or {}).get(label) or {}
+                    nums = d.get("numbers") or []
+                    if nums:
+                        any_num = True
+                        st.markdown(f"*{label}*")
+                        for x in nums[:5]:
+                            st.markdown(f"- {str(x).strip()}")
+                if not any_num:
+                    st.warning("未取得量化數字。可嘗試於「進階設定」"
+                               "手動指定疾病檢索詞。")
+
+                with st.expander("文獻來源清單"):
+                    for label in ["流行病學", "經濟負擔", "現行治療", "治療侷限"]:
+                        d = (b.sections or {}).get(label) or {}
+                        arts = d.get("articles") or []
+                        if not arts:
+                            continue
+                        st.markdown(f"*{label}*")
+                        for a in arts[:4]:
+                            st.markdown(
+                                f"- [{str(a.get('title',''))[:100]}]"
+                                f"({a.get('url','')}) "
+                                f"— {a.get('journal','')} ({a.get('date','')})")
+
+                if b.market_calc:
+                    mc = b.market_calc
+                    st.markdown("**由上而下市場推估（Biodesign 官方方法）**")
+                    for s in mc.get("steps", []):
+                        st.markdown(f"- {s}")
+                    st.metric("推估結果",
+                              f"US$ {mc.get('total_usd', 0):,}")
+                    st.caption(mc.get("caveat", ""))
+
+                rb = b.reimbursement or {}
+                if rb.get("pages"):
+                    st.markdown("**台灣健保給付現況**")
+                    st.caption("給付是台灣醫材商品化的關鍵門檻，"
+                               "須核對最新支付標準。")
+                    for label, info in rb["pages"].items():
+                        st.markdown(f"- [{label}]({info.get('url','')})")
+
+                if b.errors:
+                    with st.expander("檢索狀況"):
+                        for e in b.errors:
+                            st.markdown(f"- {e.get('source','')}："
+                                        f"{e.get('error','')}")
+                st.caption(b.note)
+        idx += 1
 
     if "regulatory" in rep.modules_run:
         with tabs[idx]:
@@ -340,7 +420,8 @@ if rep:
                     width="stretch", hide_index=True,
                     column_config={"連結": st.column_config.LinkColumn()})
             if p.assignees:
-                st.markdown("**主要專利佈局者（Google Patents）**")
+                src_lbl = "EPO OPS" if p.epo_assignees else "專利檢索"
+                st.markdown(f"**主要專利佈局者（{src_lbl}）**")
                 st.dataframe(
                     [{"申請人": x.assignee, "件數": x.count, "最近申請": x.latest}
                      for x in p.assignees],
@@ -364,6 +445,53 @@ if rep:
                   "理由": v["reason"]} for v in fb.values()],
                 width="stretch", hide_index=True)
         st.caption(rep.screening_feedback.get("note", ""))
+    idx += 1
+
+    with tabs[idx]:
+        st.markdown("### Biodesign 要求、但工具無法代勞的部分")
+        st.warning(
+            "**這份報告不等於完成 Biodesign 評估。**"
+            "風險矩陣（紅／黃／綠）與需求標準（must-have）"
+            "必須由團隊經訪談與臨床觀察決定。工具只把外部證據攤在桌上。"
+        )
+        st.markdown("**需求陳述檢查要點**")
+        st.markdown(
+            "- 格式：一種 [解決什麼問題] 的方法，用於 [目標族群]，"
+            "以達成 [期望結果]\n"
+            "- 不可含解法線索（不可寫「用超音波」）\n"
+            "- 三要素齊備：問題、族群、結果\n"
+            "- 需經利害關係人訪談驗證"
+        )
+        st.markdown("**需求標準（Need Criteria）**")
+        st.dataframe(
+            [{"類別": "療效", "工具已提供": "疾病負擔、現行療法失效比例",
+              "團隊仍需補": "要改善到什麼程度才算有意義"},
+             {"類別": "成本", "工具已提供": "間接資料（貿易額、醫療支出）",
+              "團隊仍需補": "決策者可接受的價格上限（須有來源）"},
+             {"類別": "安全", "工具已提供": "競品召回紀錄",
+              "團隊仍需補": "可量測的安全指標與門檻"},
+             {"類別": "易用性", "工具已提供": "—",
+              "團隊仍需補": "使用時間、訓練需求、場域要求"}],
+            width="stretch", hide_index=True)
+        st.caption("官方要求：3-5 條 must-have、3-5 條 nice-to-have，"
+                   "每條具體可量測；療效與成本一定要放進 must-have。")
+        st.markdown("**風險矩陣（Stage 4.6 交付物）**")
+        st.dataframe(
+            [{"構面": "智財（IP）", "紅": "", "黃": "", "綠": "",
+              "工具提供": "專利地景"},
+             {"構面": "法規", "紅": "", "黃": "", "綠": "",
+              "工具提供": "分類與路徑"},
+             {"構面": "商業模式／給付", "紅": "", "黃": "", "綠": "",
+              "工具提供": "健保特材給付"},
+             {"構面": "技術可行性", "紅": "", "黃": "", "綠": "",
+              "工具提供": "需團隊原型驗證"}],
+            width="stretch", hide_index=True)
+        st.markdown("**利害關係人分析（Stage 2.3）**")
+        st.markdown(
+            "- 誰決定買（決策者）？誰使用（使用者）？誰付錢（付款者）？\n"
+            "- 各自最在意什麼？對新方案的接受度？\n"
+            "- **須以訪談取得，無法從資料庫推得。**"
+        )
     idx += 1
 
     with tabs[idx]:

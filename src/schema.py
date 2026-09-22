@@ -8,12 +8,14 @@ from datetime import date
 TODAY = date.today().isoformat()
 
 MODULE_LABELS = {
+    "burden": "疾病負擔與市場推估",
     "regulatory": "法規路徑判定",
     "competitor": "競品與市場地景",
     "patent": "專利與 FTO 初篩",
 }
 
-MODULE_ORDER = ["regulatory", "competitor", "patent"]
+# 順序對應 Biodesign 六階段：需求篩選（2.1/2.2/2.4）在概念選擇（4.1/4.2）之前
+MODULE_ORDER = ["burden", "regulatory", "competitor", "patent"]
 
 
 @dataclass
@@ -101,6 +103,7 @@ class CompetitorResult:
     taiwan_relaxed: bool = False
     taiwan_licensees: list[LicenseeGroup] = field(default_factory=list)
     international: list[InternationalCompetitor] = field(default_factory=list)
+    international_term: str = ""
 
     # --- 全球資料（openFDA UDI / registrationlisting / PMA / enforcement）---
     udi_total: int | None = None
@@ -116,6 +119,7 @@ class CompetitorResult:
 
     # --- 市場規模（UN Comtrade / World Bank）---
     market_hs: str = "9018"
+    market_hs_desc: str = "醫療儀器及用具"
     market_year: int = 2022
     market_total_usd: float = 0.0
     market_rows: list[dict] = field(default_factory=list)
@@ -172,6 +176,22 @@ class PatentResult:
 
 
 @dataclass
+class BurdenResult:
+    """疾病負擔與市場推估（Biodesign Stage 2.1 / 2.2 / 2.4）。
+
+    對應 Biodesign 需求篩選的核心問題：疾病有多嚴重、
+    現行照護哪裡不夠好、多少人需要、現在花多少錢。
+    """
+    condition: str = ""
+    sections: dict = field(default_factory=dict)
+    errors: list[dict] = field(default_factory=list)
+    reimbursement: dict = field(default_factory=dict)
+    market_calc: dict = field(default_factory=dict)
+    population_rows: list[dict] = field(default_factory=list)
+    note: str = ""
+
+
+@dataclass
 class Report:
     generated: str = TODAY
     product_description: str = ""
@@ -183,6 +203,7 @@ class Report:
     regulatory: RegulatoryResult = field(default_factory=RegulatoryResult)
     competitor: CompetitorResult = field(default_factory=CompetitorResult)
     patent: PatentResult = field(default_factory=PatentResult)
+    burden: BurdenResult = field(default_factory=BurdenResult)
     screening_feedback: dict = field(default_factory=dict)
     disclaimer: str = (
         "本報告為早期探索與資料彙整輔助，不提供專利法律意見、"

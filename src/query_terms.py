@@ -170,6 +170,65 @@ def is_generic(query: str) -> bool:
     return query in set(_GENERIC_HINTS.values())
 
 
+# 疾病／臨床狀態對照（供 PubMed 疾病負擔檢索用）
+# 為什麼需要獨立一組：裝置檢索詞（endotracheal tube holder）查的是「產品」，
+# 疾病負擔查的是「臨床狀態」（urinary retention）。兩者是完全不同的概念，
+# 用裝置詞去 PubMed 查盛行率會撈到不相關文獻。
+_CONDITION_HINTS: dict[str, str] = {
+    "失禁性皮膚炎": "incontinence-associated dermatitis",
+    "膀胱餘尿": "urinary retention",
+    "餘尿": "urinary retention",
+    "泌尿道感染": "catheter-associated urinary tract infection",
+    "尿路感染": "catheter-associated urinary tract infection",
+    "導尿管": "catheter-associated urinary tract infection",
+    "尿管": "urinary catheterization",
+    "壓瘡": "pressure ulcer",
+    "褥瘡": "pressure ulcer",
+    "糖尿病足": "diabetic foot ulcer",
+    "糖尿病視網膜": "diabetic retinopathy",
+    "失禁": "urinary incontinence",
+    "尿布": "urinary incontinence",
+    "氣管內管": "endotracheal intubation",
+    "呼吸器": "mechanical ventilation",
+    "洗腎": "hemodialysis",
+    "透析": "dialysis",
+    "心衰竭": "heart failure",
+    "中風": "stroke",
+    "骨折": "fracture",
+    "失智": "dementia",
+    "憂鬱": "depression",
+    "糖尿病": "diabetes mellitus",
+    "高血壓": "hypertension",
+    "慢性腎": "chronic kidney disease",
+    "癌症": "cancer",
+    "腫瘤": "neoplasm",
+    "感染": "infection",
+    "傷口": "wound",
+    "疼痛": "pain",
+    "跌倒": "falls",
+}
+
+
+def derive_condition(description: str, override: str | None = None) -> str:
+    """從產品說明抽取「疾病／臨床狀態」檢索詞（供 PubMed 疾病負擔用）。
+
+    為什麼要跟裝置檢索詞分開：
+    裝置詞問「這個產品市面上有什麼」（FDA/專利/TFDA），
+    疾病詞問「這個病有多嚴重」（PubMed）。
+    實測用裝置詞 "endotracheal tube holder" 去查盛行率會撈到無關文獻。
+
+    優先取最具體的詞（key 越長越具體），避免「感染」這種泛用詞
+    蓋掉「泌尿道感染」。
+    """
+    if override:
+        return override.strip()
+    text = description or ""
+    for key in sorted(_CONDITION_HINTS, key=len, reverse=True):
+        if key in text:
+            return _CONDITION_HINTS[key]
+    return ""
+
+
 def expand_patent_terms(device_query: str) -> list[str]:
     """專利檢索詞擴充。
 
