@@ -269,6 +269,38 @@ openFDA 在 `meta.last_updated` 直接給出資料日期，最可靠。
 
 **Semantic Scholar** — 實測 HTTP 429（限流），未採用。
 
+### 作者與機構查詢（`source_authors.py`）
+
+| 功能 | OpenAlex 參數 |
+|------|--------------|
+| 查機構論文 | `filter=authorships.institutions.ror:<ROR>` |
+| 找作者 | `/authors?search=<name>&filter=last_known_institutions.ror:<ROR>` |
+| 作者著作 | `filter=authorships.author.id:<ID>` |
+| 作者+主題 | `filter=authorships.author.id:<ID>,title_and_abstract.search:<topic>` |
+| 台灣機構全清單 | `/institutions?filter=country_code:tw`（實測 520 個） |
+
+**實測踩坑**
+
+1. **搜尋中文姓名的英文譯名會混入他人**。實測 `search=Yung-Chun Chang`
+   的 5 筆結果含 Yee-Chun Chen、C.M. Wang、Yenchun Jim Wu —— 全非同一人。
+   → 工具必須列出候選由人挑選，不可自動認定。
+
+2. **作者+主題要用 filter 內的 `title_and_abstract.search`**，
+   優於外層 `search` 參數（後者較寬鬆）。
+
+3. **OpenAlex 同一篇論文有多筆記錄**：arXiv 預印本、Zenodo、
+   期刊正式版各有獨立 DOI。實測同一篇「Mind the Gap」出現 3 次
+   （`10.48550/arxiv.2608.06752` 與兩個無 DOI 者）。
+   → 去重主鍵用**標題正規化**而非 DOI；合併時保留**最早公開日期**。
+
+4. **台灣機構 ROR 要用中文或完整英文名查，且必須驗證國家**。
+   實測 `China Medical University` 以英文名查會撈到
+   **中國鋼鐵（China Steel）**。正確 ROR 為 `00v408z34`
+   （OpenAlex 反查可得）。內建清單的 38 所均已驗證為台灣境內機構。
+
+5. OpenAlex 作者聚合**仍可能錯誤合併**同一人的多個身分，
+   或把不同人併為一人。ORCID 較可靠，但仍需檢視。
+
 ### 各國優惠期法源（已逐一查證）
 
 | 地區 | 期間 | 涵蓋學術發表 | 法源 |
