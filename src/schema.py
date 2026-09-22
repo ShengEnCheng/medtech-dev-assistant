@@ -12,10 +12,13 @@ MODULE_LABELS = {
     "regulatory": "法規路徑判定",
     "competitor": "競品與市場地景",
     "patent": "專利與 FTO 初篩",
+    "paper": "論文先前技術",
 }
 
 # 順序對應 Biodesign 六階段：需求篩選（2.1/2.2/2.4）在概念選擇（4.1/4.2）之前
-MODULE_ORDER = ["burden", "regulatory", "competitor", "patent"]
+# paper 緊接 patent 之後 —— 兩者同屬 Stage 4.1 智財保護，
+# 但先前技術的完整圖像必須同時包含專利與論文
+MODULE_ORDER = ["burden", "regulatory", "competitor", "patent", "paper"]
 
 
 @dataclass
@@ -176,6 +179,28 @@ class PatentResult:
 
 
 @dataclass
+class PaperResult:
+    """論文先前技術（non-patent literature）檢索結果。
+
+    為什麼與 PatentResult 分開：
+    專利與論文是兩種不同的先前技術來源，檢索邏輯與風險性質不同。
+    論文的關鍵風險是「己方已發表」（機構自我碰撞）與預印本日期，
+    這些在專利資料庫裡看不出來。
+    """
+    product: str = ""
+    query: str = ""
+    papers: list[dict] = field(default_factory=list)
+    self_collision: list[dict] = field(default_factory=list)
+    counts: dict = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    preprint_count: int = 0
+    grace_periods: list[dict] = field(default_factory=list)
+    order_note: str = ""
+    note: str = ""
+    degraded: bool = False
+
+
+@dataclass
 class BurdenResult:
     """疾病負擔與市場推估（Biodesign Stage 2.1 / 2.2 / 2.4）。
 
@@ -203,6 +228,7 @@ class Report:
     regulatory: RegulatoryResult = field(default_factory=RegulatoryResult)
     competitor: CompetitorResult = field(default_factory=CompetitorResult)
     patent: PatentResult = field(default_factory=PatentResult)
+    paper: PaperResult = field(default_factory=PaperResult)
     burden: BurdenResult = field(default_factory=BurdenResult)
     screening_feedback: dict = field(default_factory=dict)
     disclaimer: str = (

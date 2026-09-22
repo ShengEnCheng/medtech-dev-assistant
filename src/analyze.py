@@ -5,14 +5,15 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from . import (feedback, module_burden, module_competitor, module_patent,
-               module_regulatory, report as report_mod)
+from . import (feedback, module_burden, module_competitor, module_paper,
+               module_patent, module_regulatory, report as report_mod)
 from .query_terms import derive_device_query, derive_tfda_query, is_generic
 from .schema import (
     MODULE_LABELS,
     MODULE_ORDER,
     BurdenResult,
     CompetitorResult,
+    PaperResult,
     PatentResult,
     RegulatoryResult,
     Report,
@@ -49,7 +50,8 @@ def analyze(product_description: str,
         modules_run=modules,
     )
 
-    total = len(modules)
+    # 進度總數需含最後的彙整步驟（回饋評估不屬於模組，但會 emit）
+    total = len(modules) + 1
     step = 0
 
     def emit(msg: str) -> None:
@@ -81,13 +83,16 @@ def analyze(product_description: str,
     if "patent" in modules:
         step += 1
         emit("專利與 FTO 初篩（約需 20-40 秒）…")
-        # 若同時執行競品，可重用 Google Patents 的 assignee 分群
-        rep.patent = module_patent.run(
-            query,
-            include_google=True,
-        )
+        rep.patent = module_patent.run(query)
     else:
         rep.patent = PatentResult(query=query)
+
+    if "paper" in modules:
+        step += 1
+        emit("論文先前技術檢索（約需 20-40 秒）…")
+        rep.paper = module_paper.run(product_description, query=query)
+    else:
+        rep.paper = PaperResult(query=query)
 
     step += 1
     emit("彙整篩選分數調整建議…")
@@ -109,6 +114,9 @@ def analyze(product_description: str,
             sources.append("World Bank")
     if "patent" in modules:
         sources += ["FreePatentsOnline（US/EP/WO/JP/DE）"]
+    if "paper" in modules:
+        sources += ["論文先前技術：Europe PMC／OpenAlex／Crossref／arXiv"
+                    "（免 API key）"]
     rep.sources = sources
 
     return rep

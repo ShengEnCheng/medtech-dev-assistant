@@ -520,6 +520,94 @@ if rep:
             st.caption(p.disclaimer)
         idx += 1
 
+    if "paper" in rep.modules_run:
+        with tabs[idx]:
+            pp = rep.paper
+            if pp.degraded or not pp.papers:
+                st.warning(pp.note or "未取得論文資料")
+                st.caption("論文來源：Europe PMC、OpenAlex、Crossref、arXiv")
+            else:
+                st.caption(f"檢索詞：{pp.query}　|　命中 {len(pp.papers)} 篇"
+                           f"（預印本 {pp.preprint_count} 篇）")
+                st.caption("各來源：" + "、".join(
+                    f"{k} {v} 篇" for k, v in pp.counts.items()))
+
+                st.info(
+                    "**專利的新穎性判斷，先前技術不只有專利。**\n\n"
+                    "學術論文、會議論文、學位論文、預印本同樣會破壞新穎性。"
+                    "校園團隊最常見的風險是**己方（老師或團隊成員）已發表**。"
+                )
+
+                # --- 機構自我碰撞（最高風險，放最前）---
+                if pp.self_collision:
+                    st.error(
+                        f"**偵測到長庚體系 {len(pp.self_collision)} 篇同主題論文**"
+                        " — 請優先確認是否揭露了擬申請的技術特徵"
+                    )
+                    st.dataframe(
+                        [{"機構": c.get("institution", ""),
+                          "標題": (c.get("title") or "")[:80],
+                          "發表日": c.get("date", ""),
+                          "期刊": (c.get("venue") or "")[:35]}
+                         for c in pp.self_collision[:12]],
+                        width="stretch", hide_index=True)
+                else:
+                    st.success("未偵測到長庚體系同主題論文（降低己方先前技術風險）")
+
+                st.markdown(f"**論文清單（共 {len(pp.papers)} 篇）**")
+                st.dataframe(
+                    [{"型別": x.get("type_label") or x.get("type", ""),
+                      "標題": (x.get("title") or "")[:80],
+                      "發表日": x.get("date", ""),
+                      "期刊／來源": (x.get("venue") or "")[:34],
+                      "引用": x.get("cites", 0),
+                      "風險": x.get("risk", ""),
+                      "來源": ",".join(x.get("sources") or [])}
+                     for x in pp.papers[:20]],
+                    width="stretch", hide_index=True)
+
+                if pp.preprint_count:
+                    st.warning(
+                        f"**{pp.preprint_count} 篇預印本**：預印本的公開日"
+                        "**就是**新穎性判斷的公開日，通常比正式刊登早 6-12 個月。"
+                        "用正式發表日計算優惠期會算錯。"
+                    )
+
+                st.markdown("**各國優惠期對照（學術發表是否適用）**")
+                st.caption("各國優惠期長度不同，而且「學術發表算不算」"
+                           "是完全不同的問題 —— 這是最容易踩到的坑。")
+                _covers = {True: "是", False: "**否**", "部分": "僅限指定學術會議"}
+                st.dataframe(
+                    [{"地區": g.get("region", ""),
+                      "優惠期": f"{g.get('months','')} 個月",
+                      "涵蓋學術發表": _covers.get(g.get("covers_academic"), ""),
+                      "風險": g.get("risk", "")}
+                     for g in pp.grace_periods],
+                    width="stretch", hide_index=True)
+                with st.expander("各國法源與細節"):
+                    for g in pp.grace_periods:
+                        st.markdown(f"**{g.get('region','')}** — {g.get('note','')}")
+
+                st.error(
+                    "**歐洲是最大的風險區**：EPC Art. 55 的 6 個月優惠期"
+                    "僅限「明顯濫用」與「官方國際展覽」，"
+                    "**學術發表完全不在適用範圍**。論文一旦公開，"
+                    "歐洲新穎性即喪失且無補救。\n\n"
+                    "中國需注意：僅限「規定的學術會議或技術會議」首次發表，"
+                    "**一般期刊論文發表不適用**。"
+                )
+
+                with st.expander("時序原則（論文發表 vs 專利申請）"):
+                    st.markdown(pp.order_note)
+
+                st.caption(
+                    "**本模組不做法律判斷**。是否真的構成新穎性障礙，"
+                    "需比對申請專利範圍與論文的實際技術揭露內容，"
+                    "屬專利師專業範圍。本模組只提供論文清單、發表日期"
+                    "與法源對照。"
+                )
+        idx += 1
+
     with tabs[idx]:
         fb = rep.screening_feedback.get("adjustments", {})
         if fb:

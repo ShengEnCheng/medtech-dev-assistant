@@ -39,6 +39,9 @@ def to_markdown(report: Report) -> str:
     if "patent" in report.modules_run:
         n += 1
         A(_patent_section(report, n))
+    if "paper" in report.modules_run:
+        n += 1
+        A(_paper_section(report, n))
 
     n += 1
     A(_feedback_section(report, n))
@@ -462,6 +465,110 @@ def _patent_section(report: Report, n: int) -> str:
             A(f"- {e.get('source')}：{e.get('error', e.get('fallback', ''))}")
         A("")
     A(f"> {p.disclaimer}")
+    A("")
+    return "\n".join(L)
+
+
+def _paper_section(report: Report, n: int) -> str:
+    """論文先前技術（non-patent literature）。
+
+    為什麼獨立成章：專利的先前技術不只有專利。學術論文同樣破壞新穎性，
+    而且校園團隊最常見的致命情況是「自己的老師已發表過」。
+    此章同時提醒預印本日期與各國優惠期差異。
+    """
+    pp = report.paper
+    L: list[str] = []
+    A = L.append
+    A(f"## {_cn(n)}、論文先前技術（非專利文獻）")
+    A("")
+
+    if pp.degraded or not pp.papers:
+        A(f"（未取得論文資料：{pp.note or '檢索未回傳結果'}）")
+        A("")
+        return "\n".join(L)
+
+    A(f"- **檢索詞**：{pp.query}")
+    A(f"- **命中**：{len(pp.papers)} 篇"
+      f"（預印本 {pp.preprint_count} 篇）")
+    A(f"- **各來源**：{', '.join(f'{k} {v} 篇' for k, v in pp.counts.items())}")
+    A("")
+    A("> **專利的新穎性判斷，先前技術不只有專利。**"
+      "學術論文、會議論文、學位論文、預印本同樣會破壞新穎性。")
+    A("")
+
+    # --- 機構自我碰撞（最高風險項，放最前面）---
+    if pp.self_collision:
+        A("### 1. 機構自我碰撞（優先確認）")
+        A("")
+        A(f"偵測到長庚體系 **{len(pp.self_collision)} 篇**同主題論文。"
+          "校園團隊最常見的專利風險是**己方已發表**，"
+          "請先確認這些論文是否揭露了擬申請的技術特徵。")
+        A("")
+        A("| 機構 | 標題 | 發表日 | 期刊 |")
+        A("|---|---|---|---|")
+        for c in pp.self_collision[:12]:
+            A(f"| {c.get('institution','')} "
+              f"| {(c.get('title') or '')[:70]} "
+              f"| {c.get('date','')} "
+              f"| {(c.get('venue') or '')[:32]} |")
+        A("")
+
+    # --- 論文清單 ---
+    A("### 2. 可能構成先前技術的論文")
+    A("")
+    A("| 型別 | 標題 | 發表日 | 期刊／來源 | 引用 | 來源 |")
+    A("|---|---|---|---|---|---|")
+    for p in pp.papers[:20]:
+        A(f"| {p.get('type_label') or p.get('type','')} "
+          f"| {(p.get('title') or '')[:70]} "
+          f"| {p.get('date','')} "
+          f"| {(p.get('venue') or '')[:30]} "
+          f"| {p.get('cites',0)} "
+          f"| {','.join(p.get('sources') or [])} |")
+    A("")
+    if pp.preprint_count:
+        A(f"> **注意預印本**：上表有 {pp.preprint_count} 篇預印本。"
+          "預印本的公開日**就是**新穎性判斷的公開日，"
+          "通常比正式刊登早 6-12 個月。用正式發表日計算優惠期會算錯。")
+        A("")
+
+    # --- 優惠期矩陣 ---
+    A("### 3. 各國優惠期對照（學術發表是否適用）")
+    A("")
+    A("**這是本節最關鍵的資訊**：各國優惠期長度不同，"
+      "而且「學術發表算不算」是完全不同的問題。")
+    A("")
+    A("| 地區 | 優惠期 | 涵蓋學術發表 | 風險 | 說明 |")
+    A("|---|---|---|---|---|")
+    for g in pp.grace_periods:
+        covers = g.get("covers_academic")
+        if covers is True:
+            ctxt = "是"
+        elif covers == "部分":
+            ctxt = "**僅限指定學術會議**"
+        else:
+            ctxt = "**否**"
+        A(f"| {g.get('region','')} | {g.get('months','')} 個月 "
+          f"| {ctxt} | {g.get('risk','')} | {g.get('note','')} |")
+    A("")
+    A("> **歐洲是最大的風險區**：EPC Art. 55 的 6 個月優惠期僅限"
+      "「明顯濫用」與「官方國際展覽」，**學術發表完全不在適用範圍**。"
+      "論文一旦公開，歐洲新穎性即喪失，且無補救方式。")
+    A("")
+    A("> 中國需注意：專利法第 24 條僅限「**規定的學術會議或技術會議**」"
+      "首次發表，**一般期刊論文發表不適用**，會直接破壞新穎性。")
+    A("")
+
+    # --- 時序建議 ---
+    A("### 4. 時序原則")
+    A("")
+    A(pp.order_note)
+    A("")
+    A("---")
+    A("")
+    A("**本節不做法律判斷**。是否真的構成新穎性障礙，"
+      "需比對申請專利範圍與論文的實際技術揭露內容，"
+      "屬專利師專業範圍。本節只提供論文清單、發表日期與法源對照。")
     A("")
     return "\n".join(L)
 
