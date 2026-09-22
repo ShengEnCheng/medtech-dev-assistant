@@ -1,0 +1,18 @@
+# 環境
+.venv/
+__pycache__/
+*.py[cod]
+
+# 資料：只納入精簡索引（雲端部署要用），大檔排除
+data/*
+!data/tfda_slim.db
+
+# 報告產出（含團隊資訊，不進版控）
+reports/*
+!reports/.gitkeep
+
+# 機密：存取密碼不進版控
+.streamlit/secrets.toml
+
+# macOS
+.DS_Store

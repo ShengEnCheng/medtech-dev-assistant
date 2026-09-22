@@ -1,0 +1,14 @@
+[theme]
+primaryColor = "#0F6FBF"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F7FA"
+textColor = "#1B2733"
+
+[server]
+# 報告下載與長時檢索需要較大的上傳/逾時設定
+maxUploadSize = 50
+enableXsrfProtection = true
+enableCORS = true
+
+[browser]
+gatherUsageStats = false
