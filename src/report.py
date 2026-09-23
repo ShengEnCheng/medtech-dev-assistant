@@ -21,9 +21,25 @@ def to_markdown(report: Report) -> str:
     A(f"- **檢索詞（TFDA 台灣）**：{report.tfda_query}")
     if getattr(report.burden, "condition", ""):
         A(f"- **疾病檢索詞（PubMed）**：{report.burden.condition}")
+    _plan = getattr(report, "query_plan", {}) or {}
+    if _plan.get("tech"):
+        A(f"- **技術關鍵詞（文獻）**：{'、'.join(_plan['tech'])}")
+    if _plan.get("bilingual"):
+        A("- **取自文件的中英對照**："
+          + "、".join(f"{b['zh']} → {b['en']}"
+                      + (f" ({b['abbr']})" if b.get("abbr") else "")
+                      for b in _plan["bilingual"]))
     A(f"- **執行模組**：{'、'.join(MODULE_LABELS[m] for m in report.modules_run)}")
     A(f"- **資料來源**：{', '.join(report.sources)}")
     A("")
+
+    # 檢索詞品質提示：檢索詞錯了整份報告就錯了，必須放在最前面
+    _plan = getattr(report, "query_plan", {}) or {}
+    if _plan.get("warnings"):
+        A("> **⚠️ 檢索詞注意事項**")
+        for _w in _plan["warnings"]:
+            A(f"> - {_w}")
+        A("")
 
     # 章節編號動態產生（模組可勾選，不能寫死）
     n = 0

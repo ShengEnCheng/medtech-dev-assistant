@@ -225,6 +225,8 @@ class Report:
     tfda_query: str = ""
     modules_run: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    # 檢索詞計畫（裝置／疾病／技術詞分離，含來源標註與警告）
+    query_plan: dict = field(default_factory=dict)
     regulatory: RegulatoryResult = field(default_factory=RegulatoryResult)
     competitor: CompetitorResult = field(default_factory=CompetitorResult)
     patent: PatentResult = field(default_factory=PatentResult)

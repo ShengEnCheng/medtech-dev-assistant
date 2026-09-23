@@ -5,10 +5,15 @@
 設計理由：
   三模組不是三個獨立的查詢工具，而是把 Stage 2 篩選評分裡既有的三個維度
   （Technical Feasibility、Regulatory / Reimbursement Risk、Market Potential）
-  從「AI 文字推論」升級成「外部資料佐證」。
+  從「憑印象的判斷」升級成「外部資料佐證」。
 
 重要：這只是「調整建議」。最終分數由團隊與 mentor 確認，
       系統不能代替人做 Go / No-Go 決策。
+
+用詞說明（勿再用「AI 初判」）：
+  本工具不含任何語言模型，所有調整都來自外部資料庫的實際命中數。
+  先前版本沿用舊原型的「維持 AI 初判分數」字樣，會讓使用者誤以為
+  背後有模型在推論。正確說法是「未取得佐證資料，故不調整」。
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ def _technical_feasibility(patent: PatentResult) -> tuple[int, str]:
     不用全文檢索命中數 —— 後者動輒數千至上萬筆，不是相關件數。
     """
     if patent.degraded:
-        return 0, "專利檢索未取得結果，維持 AI 初判分數（需人工補檢索）"
+        return 0, "專利檢索未取得結果，無佐證資料故不調整（需人工補檢索）"
 
     high = len(patent.high_risk or [])
 
@@ -46,7 +51,7 @@ def _regulatory_risk(regulatory: RegulatoryResult) -> tuple[int, str]:
     """分類越高 → 法規風險越高（此為負向指標，分數越高越不利）。"""
     classes = {c.device_class for c in regulatory.classification if c.device_class}
     if not classes:
-        return 0, "未取得分類資料，維持 AI 初判（建議手動指定檢索詞）"
+        return 0, "未取得分類資料，無佐證故不調整（建議手動指定檢索詞）"
     if classes == {"3"}:
         return +2, "Class III／需 PMA，法規風險最高"
     if "3" in classes:

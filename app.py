@@ -174,6 +174,73 @@ with col_right:
         )
         need = st.text_input("Need Statement（選填）", placeholder="")
 
+    # ---------------- 檢索詞預檢（跑之前先讓使用者確認）----------------
+    plan = None
+    if product.strip():
+        try:
+            from src.query_terms import derive_query_plan
+            plan = derive_query_plan(
+                product.strip(),
+                override_device=manual.strip() or None,
+                override_tfda=manual_tw.strip() or None,
+                override_condition=manual_cond.strip() or None,
+            )
+        except Exception:
+            plan = None
+
+    if plan:
+        with st.expander("**檢索詞預檢**（建議先確認再執行）", expanded=True):
+            st.caption(
+                "工具會用下列詞彙查外部資料庫。**檢索詞錯了，"
+                "整份報告就是錯的** —— 請確認這些詞代表你的產品。"
+            )
+            src_label = {
+                "文件中英對照": "✅ 取自您文件中的中英對照",
+                "手動指定": "✅ 您手動指定",
+                "對照表（具體）": "🔸 內建對照表",
+                "對照表": "🔸 內建對照表",
+                "對照表（泛用）": "⚠️ 內建對照表（泛用詞）",
+                "技術詞（退路）": "⚠️ 以技術詞代替",
+            }
+            rows = []
+            for key, label in (("device", "裝置品名（FDA／專利）"),
+                               ("condition", "疾病狀態（PubMed）"),
+                               ("tfda", "中文品名（TFDA 台灣）")):
+                val = plan.get(key) or ""
+                rows.append({
+                    "用途": label,
+                    "檢索詞": val or "**（未取得）**",
+                    "來源": src_label.get(plan["source"].get(key, ""),
+                                          plan["source"].get(key, "") or "—"),
+                })
+            rows.append({
+                "用途": "技術關鍵詞（文獻）",
+                "檢索詞": "、".join(plan.get("tech") or []) or "**（未取得）**",
+                "來源": src_label.get(plan["source"].get("tech", ""), "—"),
+            })
+            st.dataframe(rows, width="stretch", hide_index=True)
+
+            if plan.get("bilingual"):
+                st.success(
+                    "**從您的文件中找到中英對照**（準確度最高）："
+                    + "、".join(f"{b['zh']} → {b['en']}"
+                                + (f" ({b['abbr']})" if b.get("abbr") else "")
+                                for b in plan["bilingual"])
+                )
+            for w in plan.get("warnings", []):
+                st.warning(w)
+            if not plan.get("device"):
+                st.error(
+                    "**未取得英文裝置檢索詞。** 專利與競品模組將無法查詢。"
+                    "請在下方「進階設定」手動指定 FDA 官方品名。"
+                )
+            if plan.get("fallback_used"):
+                st.caption(
+                    "註：舊版會把中文原文直接送去查英文資料庫，"
+                    "撈回無關結果且看不出錯誤。現已改為明確提示，"
+                    "不再產出誤導性結果。"
+                )
+
     run = st.button("開始評估", type="primary", width="stretch",
                     disabled=not product.strip() or not picked)
 

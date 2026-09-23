@@ -7,7 +7,8 @@ from pathlib import Path
 
 from . import (feedback, module_burden, module_competitor, module_paper,
                module_patent, module_regulatory, report as report_mod)
-from .query_terms import derive_device_query, derive_tfda_query, is_generic
+from .query_terms import (derive_device_query, derive_query_plan,
+                          derive_tfda_query, is_generic)
 from .schema import (
     MODULE_LABELS,
     MODULE_ORDER,
@@ -39,8 +40,18 @@ def analyze(product_description: str,
     if not modules:
         modules = list(ALL_MODULES)
 
-    query = derive_device_query(product_description, device_query)
-    tfda_q = (tfda_query or derive_tfda_query(product_description) or query)
+    # 檢索詞計畫：一次產出裝置／疾病／技術三組詞
+    # （單一檢索詞餵所有資料庫是舊設計，實測會撈到完全無關的結果）
+    plan = derive_query_plan(
+        product_description,
+        override_device=device_query,
+        override_tfda=tfda_query,
+        override_condition=condition_query,
+    )
+
+    query = plan["device"]
+    tfda_q = plan["tfda"] or query
+
     rep = Report(
         generated=date.today().isoformat(),
         product_description=product_description,
@@ -49,6 +60,10 @@ def analyze(product_description: str,
         tfda_query=tfda_q,
         modules_run=modules,
     )
+    # 檢索詞計畫寫入報告（介面顯示與除錯用）
+    rep.query_plan = plan
+    # 論文模組用技術詞（文獻檢索的核心），沒有時退回裝置詞
+    tech_query = plan["tech"][0] if plan.get("tech") else query
 
     # 進度總數需含最後的彙整步驟（回饋評估不屬於模組，但會 emit）
     total = len(modules) + 1
@@ -62,7 +77,8 @@ def analyze(product_description: str,
         step += 1
         emit("疾病負擔與市場推估（約需 20-40 秒）…")
         rep.burden = module_burden.run(
-            product_description, condition_override=condition_query)
+            product_description,
+            condition_override=plan["condition"] or condition_query)
     else:
         rep.burden = BurdenResult()
 
@@ -90,7 +106,9 @@ def analyze(product_description: str,
     if "paper" in modules:
         step += 1
         emit("論文先前技術檢索（約需 20-40 秒）…")
-        rep.paper = module_paper.run(product_description, query=query)
+        # 論文檢索用「技術詞」而非裝置品名 —— 文獻裡的正式名詞是
+        # ballistocardiography，不是 wearable device。
+        rep.paper = module_paper.run(product_description, query=tech_query)
     else:
         rep.paper = PaperResult(query=query)
 
