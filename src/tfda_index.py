@@ -69,6 +69,54 @@ def download_csv(dest_dir: Path) -> Path:
     return csv_path
 
 
+def _db_source_date(db_path: Path) -> str:
+    """讀取索引的官方資料日期（meta.source_date）。
+
+    讀不到時回空字串（舊版索引、或檔案不存在）。
+    不拋例外 —— 索引還原不該讓整個 app 起不來。
+    """
+    try:
+        con = sqlite3.connect(db_path)
+        try:
+            row = con.execute(
+                "SELECT value FROM meta WHERE key='source_date'").fetchone()
+            return str(row[0]) if row and row[0] else ""
+        finally:
+            con.close()
+    except Exception:
+        return ""
+
+
+def _is_newer_db(candidate: Path, current: Path) -> bool:
+    """判斷 candidate 的官方資料是否比 current 新。
+
+    判準優先序（語意由強到弱）：
+      1. candidate 無日期 → 不換（無從比較，保守）
+      2. current 無日期 → 不換（可能是使用者剛手動重建的完整索引，
+         且舊版索引會由 ensure_meta() 一次性補上日期，屬過渡狀態）
+      3. 雙方都有日期 → 比日期字串（ISO 格式可直接比大小）
+      4. 都讀不到 → 比檔案大小，且要求「大小不同」才換
+
+    為什麼不用 mtime 當主要判準：git checkout 會把 mtime 設為當下時間，
+    跨環境複製後 mtime 完全不可信 —— 可能用舊資料覆蓋新資料。
+
+    為什麼 current 無日期時不換：無日期的索引無法判斷新舊。部署容器內
+    的副本來自 slim（必帶日期），因此不會卡在無日期狀態；若真的遇到，
+    使用 --force 或介面上的重建按鈕即可。寧可漏更新一次，也不要蓋掉
+    使用者剛建好的索引。
+    """
+    if not candidate.exists():
+        return False
+    if not current.exists():
+        return True
+
+    a, b = _db_source_date(candidate), _db_source_date(current)
+    if a and b:
+        return a > b
+    # 任一方無官方日期 → 無從比較，維持現狀
+    return False
+
+
 def get_db_path(data_dir: Path) -> Path:
     """取得 TFDA 索引路徑，必要時自動從 repo 內的精簡副本還原。
 
@@ -91,12 +139,17 @@ def get_db_path(data_dir: Path) -> Path:
         # 若 repo 內的精簡索引比容器內的副本新，需重新複製。
         #
         # 為什麼需要這一步（實測踩到）：
-        # data/* 是 gitignore 的（僅 tfda_slim.db 例外），所以部署平台
+        # data/* 是 gitignore 的（僅 tfda_slim.db 例外），部署平台
         # 重新部署時不會刪掉執行期產生的 tfda_68.db。舊版邏輯只要
         # canonical 存在就直接回傳，導致更新 repo 內的精簡索引後
         # 線上永遠沿用舊副本 —— 實測線上顯示 37.2 MB、repo 已是 22 MB，
-        # 資料更新（TFDA 官方每週更新）永遠反映不到部署環境。
-        if bundled.exists() and bundled.stat().st_mtime > canonical.stat().st_mtime:
+        # TFDA 官方每週更新永遠反映不到部署環境。
+        #
+        # 判準用「官方資料日期」（meta.source_date）而非檔案 mtime：
+        # mtime 在不同環境複製時會走樣（git checkout 會把 mtime 設為
+        # 當下時間），拿它比較可能反過來用舊資料覆蓋新資料。
+        # 資料日期才是語意上正確的比較基準。
+        if bundled.exists() and _is_newer_db(bundled, canonical):
             import shutil
             shutil.copy2(bundled, canonical)
             return canonical
