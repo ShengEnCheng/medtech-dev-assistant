@@ -24,6 +24,18 @@ def to_markdown(report: Report) -> str:
     _plan = getattr(report, "query_plan", {}) or {}
     if _plan.get("tech"):
         A(f"- **技術關鍵詞（文獻）**：{'、'.join(_plan['tech'])}")
+    _pp = getattr(report, "paper", None)
+    if _pp is not None and getattr(_pp, "relevance", None):
+        _rel = _pp.relevance
+        _lbl = {"pass": "✅ 通過相關性驗證",
+                "weak": "🔸 相關性偏低",
+                "fail": "❌ 相關性不符",
+                "unverified": "❔ 無法自動驗證（文件中無中英對照）",
+                "unknown": "❔ 樣本不足"}.get(_rel.get("verdict"), "")
+        if _lbl:
+            A(f"- **文獻檢索品質**：{_lbl}"
+              f"（技術命中率 {_rel.get('rate', 0):.0%}，"
+              f"{_rel.get('hits', 0)}/{_rel.get('total', 0)} 篇）")
     if _plan.get("bilingual"):
         A("- **取自文件的中英對照**："
           + "、".join(f"{b['zh']} → {b['en']}"
@@ -503,11 +515,45 @@ def _paper_section(report: Report, n: int) -> str:
         A("")
         return "\n".join(L)
 
-    A(f"- **檢索詞**：{pp.query}")
+    A(f"- **檢索詞**：{pp.query}"
+      + (f"（來源：{pp.query_source}）" if getattr(pp, "query_source", "") else ""))
     A(f"- **命中**：{len(pp.papers)} 篇"
       f"（預印本 {pp.preprint_count} 篇）")
-    A(f"- **各來源**：{', '.join(f'{k} {v} 篇' for k, v in pp.counts.items())}")
+
+    # 檢索品質：這是整份論文章節可信度的前提，必須放在最前面。
+    # 檢索詞錯了，底下清單再整齊都是錯的。
+    _rel = getattr(pp, "relevance", None) or {}
+    if _rel.get("verdict"):
+        _v = _rel["verdict"]
+        _icon = {"pass": "✅", "weak": "🔸", "fail": "❌",
+                 "unverified": "❔", "unknown": "❔"}.get(_v, "")
+        _txt = {"pass": "通過自動相關性驗證",
+                "weak": "相關性偏低，建議人工檢視",
+                "fail": "相關性不符，結果可能不是本產品的先前技術",
+                "unverified": "無法自動驗證（產品說明中沒有中英對照）",
+                "unknown": "樣本不足，無法判定"}.get(_v, _v)
+        A(f"- **檢索品質**：{_icon} {_txt}"
+          f"（技術詞命中 {_rel.get('rate', 0):.0%}，"
+          f"{_rel.get('hits', 0)}/{_rel.get('total', 0)} 篇）")
+        if _rel.get("primary"):
+            A(f"  - 驗證用的技術概念：{'、'.join(_rel['primary'])}")
+        if _rel.get("context"):
+            A(f"  - 應用場域對照：{'、'.join(_rel['context'][:4])}"
+              f"（文獻提及率 {_rel.get('context_rate', 0):.0%}）")
+
+    if getattr(pp, "attempts", None) and len(pp.attempts) > 1:
+        A("- **候選檢索詞嘗試**：")
+        for a in pp.attempts:
+            _r = a.get("relevance", {})
+            A(f"  - `{a['query']}`（{a['source']}）→ "
+              f"{_r.get('verdict', '?')} {_r.get('rate', 0):.0%}")
+
+    if getattr(pp, "verify_note", ""):
+        A(f"- **補充**：{pp.verify_note}")
     A("")
+    if getattr(pp, "verify_warning", ""):
+        A(f"> ⚠️ **檢索品質警告**：{pp.verify_warning}")
+        A("")
     A("> **專利的新穎性判斷，先前技術不只有專利。**"
       "學術論文、會議論文、學位論文、預印本同樣會破壞新穎性。")
     A("")

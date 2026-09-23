@@ -31,28 +31,63 @@ def _risk_flag(paper: dict, cutoff_year: int | None = None) -> str:
 
 
 def run(product: str, query: str | None = None,
-        limit: int = 12, include_arxiv: bool = True) -> PaperResult:
+        limit: int = 12, include_arxiv: bool = True,
+        plan: dict | None = None) -> PaperResult:
     """執行論文先前技術檢索。
 
     參數
     ----
-    product : 產品說明原文（記錄用）
-    query   : 英文檢索詞。未提供時由呼叫端用 derive_device_query 推導。
-              建議 3-5 個具體詞的片語，避免泛用詞。
+    product : 產品說明原文（記錄用，也是驗證概念詞的來源）
+    query   : 英文檢索詞（單一詞；未提供 plan 時的退路）
+    plan    : 檢索詞計畫。提供時改走「多候選 + 自動驗證」流程 ——
+              依序試多個候選詞，用文件中的中英對照驗證結果，
+              通過才採用。理由：檢索詞錯了整份報告就錯了，
+              且實測多個候選會撈到不同文獻（詞形差異導致）。
     """
     res = PaperResult(product=product, query=query or "")
 
-    if not query:
+    if not query and not plan:
         res.degraded = True
         res.note = "未提供英文檢索詞，無法查詢論文先前技術"
         return res
 
-    try:
-        data = sp.search_papers_all(query, limit=limit)
-    except Exception as exc:
+    # 走驗證流程（有 plan 時）
+    verified = None
+    if plan:
+        try:
+            from . import relevance
+            verified = relevance.search_verified(
+                product, plan,
+                search_fn=lambda q, lim: sp.search_papers(q, limit=lim),
+                limit=limit, deep=True,
+            )
+            if verified.get("chosen"):
+                res.query = verified["chosen"]
+                query = verified["chosen"]
+        except Exception:
+            verified = None
+
+    if not query:
         res.degraded = True
-        res.note = f"論文檢索失敗：{type(exc).__name__}: {str(exc)[:120]}"
+        res.note = "無可用檢索詞"
         return res
+
+    if verified and verified.get("papers"):
+        # 驗證流程已取得結果，直接組裝（避免重複查詢）
+        papers = verified["papers"]
+        data = {"papers": papers, "counts": {}, "errors": [],
+                "self_collision": []}
+        try:
+            data["self_collision"] = sp.self_collision_check(query, limit=6)
+        except Exception:
+            pass
+    else:
+        try:
+            data = sp.search_papers_all(query, limit=limit)
+        except Exception as exc:
+            res.degraded = True
+            res.note = f"論文檢索失敗：{type(exc).__name__}: {str(exc)[:120]}"
+            return res
 
     papers = data.get("papers") or []
     for p in papers:
@@ -68,6 +103,15 @@ def run(product: str, query: str | None = None,
         if p.get("type") in ("preprint", "posted-content"))
     res.grace_periods = sp.grace_period_matrix()
     res.order_note = sp.submission_order_note()
+
+    # 檢索品質資訊（供報告與介面顯示）
+    if verified:
+        res.relevance = verified.get("relevance") or {}
+        res.verified_query = verified.get("chosen") or ""
+        res.query_source = verified.get("chosen_source") or ""
+        res.attempts = verified.get("attempts") or []
+        res.verify_note = verified.get("note") or ""
+        res.verify_warning = verified.get("warning") or ""
 
     if res.self_collision:
         res.note = (f"偵測到長庚體系 {len(res.self_collision)} 篇同主題論文，"

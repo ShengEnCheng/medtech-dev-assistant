@@ -604,6 +604,49 @@ if rep:
             else:
                 st.caption(f"檢索詞：{pp.query}　|　命中 {len(pp.papers)} 篇"
                            f"（預印本 {pp.preprint_count} 篇）")
+
+                # ---------------- 檢索品質驗證 ----------------
+                # 這是整份清單可信度的前提，放在最前面。
+                # 檢索詞錯了，底下清單再整齊都是錯的。
+                _rel = getattr(pp, "relevance", None) or {}
+                if _rel.get("verdict"):
+                    _v = _rel["verdict"]
+                    _line = (f"**檢索品質**：技術詞命中 "
+                             f"{_rel.get('rate', 0):.0%}"
+                             f"（{_rel.get('hits', 0)}/{_rel.get('total', 0)} 篇）")
+                    if _v == "pass":
+                        st.success(f"✅ {_line}　—— 通過自動相關性驗證")
+                    elif _v == "weak":
+                        st.warning(f"🔸 {_line}　—— 相關性偏低，建議人工檢視")
+                    elif _v == "fail":
+                        st.error(f"❌ {_line}　—— 相關性不符，"
+                                 "這些文獻可能不是本產品的先前技術")
+                    else:
+                        st.info(f"❔ {_line}　—— 無法自動驗證"
+                                "（產品說明中沒有中英對照）")
+
+                    if _rel.get("primary"):
+                        st.caption("驗證用的技術概念："
+                                   + "、".join(_rel["primary"]))
+                    if _rel.get("context"):
+                        st.caption(
+                            f"應用場域對照：{'、'.join(_rel['context'][:4])}"
+                            f"（文獻提及率 {_rel.get('context_rate', 0):.0%}）")
+
+                if getattr(pp, "verify_warning", ""):
+                    st.warning(pp.verify_warning)
+                if getattr(pp, "verify_note", ""):
+                    st.caption(pp.verify_note)
+
+                with st.expander(f"檢索過程（{len(getattr(pp, 'attempts', []) or [])} 個候選詞）"):
+                    for a in (getattr(pp, "attempts", None) or []):
+                        _r = a.get("relevance", {})
+                        _m = {"pass": "✅", "weak": "🔸", "fail": "❌",
+                              "unverified": "❔", "unknown": "❔"}.get(
+                            _r.get("verdict"), "?")
+                        st.caption(f"{_m} `{a['query']}`（{a['source']}）→ "
+                                   f"{_r.get('rate', 0):.0%}")
+
                 st.caption("各來源：" + "、".join(
                     f"{k} {v} 篇" for k, v in pp.counts.items()))
 

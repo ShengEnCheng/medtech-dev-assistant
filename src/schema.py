@@ -198,6 +198,15 @@ class PaperResult:
     order_note: str = ""
     note: str = ""
     degraded: bool = False
+    # 檢索品質驗證（多候選 + 自動相關性判定）
+    # relevance: {"verdict": pass|weak|fail|unverified,
+    #             "rate":..., "hits":..., "total":..., ...}
+    relevance: dict = field(default_factory=dict)
+    verified_query: str = ""
+    query_source: str = ""
+    attempts: list[dict] = field(default_factory=list)
+    verify_note: str = ""
+    verify_warning: str = ""
 
 
 @dataclass

@@ -108,7 +108,8 @@ def analyze(product_description: str,
         emit("論文先前技術檢索（約需 20-40 秒）…")
         # 論文檢索用「技術詞」而非裝置品名 —— 文獻裡的正式名詞是
         # ballistocardiography，不是 wearable device。
-        rep.paper = module_paper.run(product_description, query=tech_query)
+        rep.paper = module_paper.run(product_description, query=tech_query,
+                                     plan=plan)
     else:
         rep.paper = PaperResult(query=query)
 
