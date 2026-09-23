@@ -85,11 +85,25 @@ def get_db_path(data_dir: Path) -> Path:
     import shutil
 
     canonical = data_dir / f"tfda_{TFDA_INFO_ID}.db"
+    bundled = data_dir / "tfda_slim.db"
+
     if canonical.exists():
+        # 若 repo 內的精簡索引比容器內的副本新，需重新複製。
+        #
+        # 為什麼需要這一步（實測踩到）：
+        # data/* 是 gitignore 的（僅 tfda_slim.db 例外），所以部署平台
+        # 重新部署時不會刪掉執行期產生的 tfda_68.db。舊版邏輯只要
+        # canonical 存在就直接回傳，導致更新 repo 內的精簡索引後
+        # 線上永遠沿用舊副本 —— 實測線上顯示 37.2 MB、repo 已是 22 MB，
+        # 資料更新（TFDA 官方每週更新）永遠反映不到部署環境。
+        if bundled.exists() and bundled.stat().st_mtime > canonical.stat().st_mtime:
+            import shutil
+            shutil.copy2(bundled, canonical)
+            return canonical
         return canonical
 
-    bundled = data_dir / "tfda_slim.db"
     if bundled.exists():
+        import shutil
         data_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(bundled, canonical)
         return canonical
