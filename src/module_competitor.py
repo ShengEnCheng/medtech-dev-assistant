@@ -39,6 +39,7 @@ from .schema import (
 def run(device_query: str, tfda_db: Path | None = None,
         tfda_limit: int = 200, fda_limit: int = 50,
         tfda_query: str | None = None,
+        category_terms: list[str] | None = None,
         include_market: bool = True) -> CompetitorResult:
     """執行競品與市場地景分析（全球）。
 
@@ -48,6 +49,15 @@ def run(device_query: str, tfda_db: Path | None = None,
     out = CompetitorResult(query=device_query, query_date=TODAY)
 
     # 1. 台灣已取證廠商（TFDA 本地索引）
+    #
+    # **兩層檢索**（實測需求）：
+    #   精確層：用具體品名（如「超音波膀胱掃描儀」）→ 最接近的既有產品
+    #   同類層：用去品牌的核心詞（如「膀胱」）  → 整個品類的市場地景
+    #
+    # 為什麼需要兩層：只用精確品名檢索，實測三案例都只命中 1 件。
+    # 但育成輔導要回答的是「這一類產品有誰在做、市場有多擠」，
+    # 只有 1 家看不出競爭態勢。兩層並陳才能同時回答
+    # 「最接近的既有產品是誰」與「這個品類的玩家有幾家」。
     tq = tfda_query or device_query
     out.tfda_query = tq
     if tfda_db and tfda_db.exists():
@@ -58,6 +68,68 @@ def run(device_query: str, tfda_db: Path | None = None,
             out.taiwan_relaxed = meta["relaxed"]
             out.taiwan_total = meta["total"]
             out.tfda_used_terms = meta["used_terms"]
+
+            # 同類層：查整個品類的市場地景。
+            #
+            # 核心詞來源（實測修正）：
+            # 原本從命中品名硬切尾段，會得到「凱諾辛攜帶式呼吸監測器」
+            # 這種仍含產品系列名的長詞，查不出品類規模。
+            # 改用**品類層級**的詞：
+            #   a. 呼叫端傳入的 category_terms（LLM 候選 + 規則式詞組）
+            #   b. 從說明抓的中文部位／功能詞
+            # 實測「膀胱」47 筆、「超音波」200 筆才是品類層級的詞。
+            try:
+                from .tfda_realnames import core_terms
+                _cores: list[str] = []
+                for c in (category_terms or []):
+                    c = (c or "").strip()
+                    if 2 <= len(c) <= 12 and c not in _cores:
+                        _cores.append(c)
+                # 補充：從命中品名取真正的品類尾段（去掉 >8 字的前綴）
+                for r in rows[:6]:
+                    nm = core_terms(r.get("name_zh") or "")
+                    for c in nm:
+                        if 4 <= len(c) <= 9 and c not in _cores:
+                            _cores.append(c)
+                _cores = _cores[:5]
+                _cat: dict[str, dict] = {}
+                _term_counts: dict[str, int] = {}
+                for c in _cores:
+                    m2 = tfda_index.search_with_meta(tfda_db, c, limit=300,
+                                                     strict=True)
+                    _term_counts[c] = len(m2.get("rows", []))
+                    for r in m2.get("rows", []):
+                        nm2 = (r.get("name_zh") or "")
+                        _key = (r.get("applicant") or "（未載明）").strip() or "（未載明）"
+                        e = _cat.setdefault(_key, {
+                            "applicant": _key, "count": 0,
+                            "categories": set(), "samples": []})
+                        e["count"] += 1
+                        if r.get("category"):
+                            e["categories"].add(r["category"])
+                        if len(e["samples"]) < 3 and nm2:
+                            e["samples"].append(nm2)
+                if _cat:
+                    out.taiwan_category_total = sum(
+                        v["count"] for v in _cat.values())
+                    out.taiwan_category_terms = _cores
+                    # 各核心詞的件數（供檢視是否有單一泛用詞主導）
+                    out.taiwan_category_breakdown = [
+                        {"term": c, "count": _term_counts.get(c, 0)}
+                        for c in _cores
+                    ]
+                    out.taiwan_category_licensees = [
+                        LicenseeGroup(
+                            applicant=v["applicant"],
+                            license_count=v["count"],
+                            categories=sorted(v["categories"]),
+                            samples=v["samples"],
+                        )
+                        for v in sorted(_cat.values(),
+                                        key=lambda x: -x["count"])[:15]
+                    ]
+            except Exception:
+                pass
             out.taiwan_licensees_sample = len(rows)
             agg: dict[str, dict] = {}
             for r in rows:

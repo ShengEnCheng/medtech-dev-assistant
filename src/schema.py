@@ -105,6 +105,11 @@ class CompetitorResult:
     taiwan_licensees_sample: int = 0
     taiwan_relaxed: bool = False
     taiwan_licensees: list[LicenseeGroup] = field(default_factory=list)
+    # 同類層（用去品牌核心詞查整個品類，看市場地景有多擠）
+    taiwan_category_total: int = 0
+    taiwan_category_terms: list[str] = field(default_factory=list)
+    taiwan_category_breakdown: list[dict] = field(default_factory=list)
+    taiwan_category_licensees: list[LicenseeGroup] = field(default_factory=list)
     international: list[InternationalCompetitor] = field(default_factory=list)
     international_term: str = ""
 

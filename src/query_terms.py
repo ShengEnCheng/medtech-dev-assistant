@@ -236,6 +236,171 @@ def lookup_bilingual(text: str, zh_key: str) -> str:
     return ""
 
 
+# TFDA 品名中的「泛用修飾詞」：出現在詞裡不影響具體度，
+# 但單獨出現時代表該詞很泛（如「超音波」「監視」）。
+_TFDA_GENERIC_ZH = {
+    "超音波", "監視", "監測", "感測", "生理", "醫療", "器材", "設備",
+    "系統", "裝置", "儀器", "配件", "耗材", "器械", "電子", "數位",
+    "分析", "檢驗", "診斷", "治療", "手術", "材料", "器具",
+}
+
+
+def _tfda_specificity(term: str) -> int:
+    """估算 TFDA 中文檢索詞的具體度（越高越精確）。
+
+    **為什麼不能只看命中數挑詞**（實測踩到的嚴重缺陷）：
+    膀胱餘尿案，候選池裡「超音波」命中 200 筆、「膀胱容量測定儀」2 筆。
+    若取命中最多者會挑中「超音波」→ 台灣競品 573 件，
+    包括「富士軟片醫療產品」等完全無關的廠商。
+    命中數多不等於對 —— 泛用詞的命中數天生就高。
+
+    具體度規則：
+      基礎分 = 詞長（中文品名越長通常越具體）
+      泛用詞扣分（單獨的模態／功能詞）
+      含「測定／測量／掃描／監視器／測試」等品類詞加分
+         （代表它是一個「產品品類」而非「技術手段」）
+
+    實測校準：
+      「生理監視器」   39 筆、具體度高 ✅
+      「超音波膀胱掃描儀」1 筆、具體度高 ✅
+      「超音波」      200 筆、具體度低 ❌
+    """
+    t = (term or "").strip()
+    if len(t) < 2:
+        return -10
+    score = len(t)
+    if t in _TFDA_GENERIC_ZH:
+        score -= 8
+    # 品類詞加分：代表這是產品而不是技術手段
+    for k in ("測定", "測量", "測容", "掃描", "監視器", "監視儀", "偵測",
+              "檢測", "分析儀", "感測器", "紀錄器", "記錄器", "導管",
+              "套管", "貼片", "墊", "治療器", "電極"):
+        if k in t:
+            score += 4
+            break
+    # 純模態詞（超音波、X光）單獨使用扣分
+    for k in ("超音波", "x光", "磁振", "電腦斷層"):
+        if t == k:
+            score -= 6
+    return score
+
+
+def verify_tfda_candidates(db_path, candidates: list[str],
+                           baseline_terms: list[str] | None = None,
+                           min_results: int = 1,
+                           min_specificity: int = 0) -> dict:
+    """實測挑選最佳的 TFDA 中文候選詞。
+
+    為什麼要實測而非照單全收（實測數據）：
+      心衰竭案 LLM 提「心臟血管監測器」→ TFDA 0 筆
+      尿布案   LLM 提「尿液分析儀」    → TFDA 99 筆 ✅
+      尿布案   LLM 提「失禁警報器」    → TFDA 0 筆
+    LLM 提的是「可能的詞」，實際命中數才是判準。
+
+    **門檻為什麼設 1 而不是 3**（實測教訓）：
+    LLM 抽取有隨機性，同一份心衰竭說明兩次跑出不同候選：
+      第一次：生理監視器 → 39 筆 ✅
+      第二次：心臟血管監測器 0、呼吸監測器 1、睡眠生理監測儀 1
+    後者若用門檻 3 全部丟棄 → 退回英文詞 → TFDA 檢索全空。
+    創新產品的品名本來就少見，命中 1 筆仍是有意義的線索
+    （可能是最接近的既有品名）。因此改為「有命中就採用最多的那個」，
+    並在結果中保留全部數字供人工判斷。
+
+    回傳 {"chosen":..., "results":[{term,count},...], "best_count":...}
+    """
+    # 檢索前清理候選詞：TFDA 品名常含品牌與附註（「“凱琳” 女用尿濕
+    # 感測器 (未滅菌)」）。檢索函式按空格拆詞 OR 連接，若不清理，
+    # 「未滅菌」會單獨命中大量許可證 → 回報 200 筆 →
+    # 台灣競品暴增到 14,676 件（實測 bug）。
+    try:
+        from .tfda_realnames import clean_query_term
+    except Exception:
+        def clean_query_term(x):
+            return (x or "").strip()
+
+    results: list[dict] = []
+    for t in (candidates or []):
+        t = clean_query_term(t or "")
+        if len(t) < 2:
+            continue
+        n = 0
+        try:
+            from . import tfda_index
+            meta = tfda_index.search_with_meta(db_path, t, limit=200,
+                                               strict=True)
+            n = len(meta.get("rows", []))
+        except Exception:
+            n = 0
+        results.append({"term": t, "count": n})
+
+    # ---------- 把規則式詞組也納入實測比較 ----------
+    #
+    # 為什麼要一起比：LLM 候選不必然優於規則式。
+    # 實測對照：
+    #   尿布案   LLM「尿液分析儀」0 筆 vs 規則式「失禁」7 筆 → 規則式勝
+    #   心衰竭   LLM「生理監視器」39 筆 vs 規則式（空）      → LLM 勝
+    # 只有實測才知道哪個好，不能預設 LLM 一定比較強。
+    baseline: list[dict] = []
+    if baseline_terms:
+        # 規則式是多詞組（漸進式檢索），逐詞測單獨命中數
+        for t in baseline_terms:
+            t = clean_query_term(t or "")
+            if len(t) < 2:
+                continue
+            n = 0
+            try:
+                from . import tfda_index
+                meta = tfda_index.search_with_meta(db_path, t, limit=200,
+                                                   strict=True)
+                n = len(meta.get("rows", []))
+            except Exception:
+                n = 0
+            baseline.append({"term": t, "count": n, "from": "規則式"})
+
+    pool = [dict(r, **{"from": "LLM"}) for r in results] + baseline
+
+    # 為每個候選計算具體度
+    for r in pool:
+        r["specificity"] = _tfda_specificity(r["term"])
+    for r in results:
+        r["specificity"] = _tfda_specificity(r["term"])
+    for r in baseline:
+        r["specificity"] = _tfda_specificity(r["term"])
+
+    # ---------- 挑選：具體度優先，命中數其次 ----------
+    #
+    # 為什麼不取命中數最多（實測嚴重缺陷）：
+    # 膀胱餘尿案候選池裡「超音波」命中 200 筆、「膀胱容量測定儀」2 筆。
+    # 取最多者會挑中「超音波」→ 台灣競品 573 件，含富士軟片等無關廠商。
+    # 泛用詞的命中數天生就高，**命中數多不等於對**。
+    #
+    # 正確順序：
+    #   1. 先過具體度門檻（濾掉「超音波」這類純模態詞）
+    #   2. 再過命中數門檻（至少要有資料）
+    #   3. 最後在合格者中取具體度最高者；同分才比命中數
+    ok = [r for r in pool
+          if r["count"] >= min_results
+          and r.get("specificity", 0) >= min_specificity]
+    if not ok:
+        # 放寬：具體度不足但有命中的，取命中數最少者中最具體的
+        # （寧可範圍窄一點，也不要撈進 573 件無關廠商）
+        loose = [r for r in pool if r["count"] >= min_results]
+        best = (max(loose, key=lambda x: (x.get("specificity", 0),
+                                          -x["count"]))
+                if loose else None)
+    else:
+        best = max(ok, key=lambda x: (x.get("specificity", 0), x["count"]))
+
+    return {
+        "chosen": best["term"] if best else "",
+        "best_count": best["count"] if best else 0,
+        "best_from": best.get("from", "") if best else "",
+        "best_specificity": best.get("specificity", 0) if best else 0,
+        "results": results,
+        "baseline": baseline,
+    }
+
+
 def _score_term(term: str) -> int:
     """檢索詞品質分數（越高越好）。供選擇主要裝置檢索詞用。
 
@@ -265,7 +430,8 @@ def _score_term(term: str) -> int:
 def derive_query_plan(description: str,
                       override_device: str | None = None,
                       override_tfda: str | None = None,
-                      override_condition: str | None = None) -> dict:
+                      override_condition: str | None = None,
+                      use_llm: bool = False) -> dict:
     """完整的檢索詞計畫（多管道分離）。
 
     為什麼要一次產出「計畫」而不是單一檢索詞：
@@ -284,19 +450,67 @@ def derive_query_plan(description: str,
     優先序（信心由高到低）：
       A. 文件中的中英對照（團隊自己標的，最準）
       B. 手動指定
-      C. 對照表（含技術詞表）
-      D. fallback（**只產出中文，不當英文送出**）
+      C. LLM 建議（use_llm=True 時）
+      D. 對照表（含技術詞表）
+      E. fallback（**只產出中文，不當英文送出**）
 
-    回傳 dict，內含 device/tfda/condition/tech 四組與來源標註。
+    LLM 的角色是「提出候選」，不是「決定答案」：
+    實測 LLM 抽出的候選拿去檢索，品質落差極大 ——
+      'Ballistocardiograph'          → 相關性 71%  ✅
+      'Breathing frequency monitor'  → 相關性  0%  ❌
+      'Heart Rate Variability'       → 相關性  0%  ❌（過泛）
+    因此 LLM 候選一律放入 `llm_candidates`，由呼叫端實測挑選
+    （relevance.search_verified 驗文獻、tfda 實測命中數驗中文）。
+    **不會因為 LLM 說了就直接採用。**
+
+    回傳 dict，內含 device/tfda/condition/tech 四組、
+    來源標註、llm_candidates（若啟用）與 warnings。
     """
     text = description or ""
     plan: dict = {
         "device": "", "tfda": "", "condition": "", "tech": [],
         "source": {}, "warnings": [], "fallback_used": False,
-        "bilingual": [],
+        "bilingual": [], "llm_candidates": [], "llm_used": False,
+        "llm_tfda": [], "llm_info": {},
     }
 
     pairs = extract_bilingual_pairs(text)
+
+    # ---------- LLM 抽取（第一關：長文 → 候選詞）----------
+    #
+    # LLM 在這裡的價值：規則式對照表收不到創新技術詞。
+    # 實測心衰竭團隊：輸入整串中文專案名稱，規則式抽出
+    # 'wearable device'（或原封不動送中文）；LLM 能抽出
+    # ballistocardiography 這類真正能撈到先前技術的學術術語。
+    #
+    # 但 LLM 產出的是「可能的詞」不是「正確的詞」，
+    # 一律只放進 llm_candidates 供實測挑選，不直接採用。
+    llm = {}
+    if use_llm:
+        try:
+            from . import llm_terms
+            llm = llm_terms.extract_terms(text)
+        except Exception:
+            llm = {}
+        if llm:
+            plan["llm_used"] = True
+            plan["llm_info"] = {
+                "model": llm.get("_model", ""),
+                "ms": llm.get("_ms", 0),
+                "cached": llm.get("_cached", False),
+            }
+            for t in (llm.get("device_en") or []):
+                plan["llm_candidates"].append(
+                    {"query": t, "source": "LLM 建議（裝置）"})
+            for t in (llm.get("tech_en") or []):
+                plan["llm_candidates"].append(
+                    {"query": t, "source": "LLM 建議（技術）"})
+            plan["llm_tfda"] = list(llm.get("tfda_zh") or [])
+            plan["llm_condition"] = list(llm.get("condition_en") or [])
+        else:
+            plan["warnings"].append(
+                "LLM 檢索詞抽取未取得結果（未設定金鑰或服務無回應），"
+                "已改用規則式對照表。")
     plan["bilingual"] = [{"zh": p["zh"], "en": p["en"], "abbr": p["abbr"]}
                          for p in pairs if not p.get("derived")]
 

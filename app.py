@@ -175,18 +175,36 @@ with col_right:
         need = st.text_input("Need Statement（選填）", placeholder="")
 
     # ---------------- 檢索詞預檢（跑之前先讓使用者確認）----------------
+    from src import llm_terms
+    _llm_ok = llm_terms.available()
+    st.session_state.setdefault("use_llm", _llm_ok)
+    use_llm = st.checkbox(
+        "用 AI 協助抽取檢索詞" + ("" if _llm_ok else "（未設定服務）"),
+        disabled=not _llm_ok,
+        help=(
+            "把產品說明交給語言模型，抽出裝置品名、疾病詞、中文品名與"
+            "技術關鍵詞。**不會直接採用** —— 抽出的每個詞都會實際"
+            "送去檢索驗證，只有查得到相關資料的才用。\n\n"
+            "關閉時改用內建對照表（較不漏，但遇創新技術詞會失效）。"
+        ),
+        key="use_llm_cb",
+    )
+    st.session_state["use_llm"] = use_llm
+
     plan = None
     if product.strip():
-        try:
-            from src.query_terms import derive_query_plan
-            plan = derive_query_plan(
-                product.strip(),
-                override_device=manual.strip() or None,
-                override_tfda=manual_tw.strip() or None,
-                override_condition=manual_cond.strip() or None,
-            )
-        except Exception:
-            plan = None
+        with st.spinner("抽取檢索詞…" if use_llm else "比對檢索詞…"):
+            try:
+                from src.query_terms import derive_query_plan
+                plan = derive_query_plan(
+                    product.strip(),
+                    override_device=manual.strip() or None,
+                    override_tfda=manual_tw.strip() or None,
+                    override_condition=manual_cond.strip() or None,
+                    use_llm=use_llm,
+                )
+            except Exception:
+                plan = None
 
     if plan:
         with st.expander("**檢索詞預檢**（建議先確認再執行）", expanded=True):
@@ -219,6 +237,38 @@ with col_right:
                 "來源": src_label.get(plan["source"].get("tech", ""), "—"),
             })
             st.dataframe(rows, width="stretch", hide_index=True)
+
+            # ---------------- AI 抽取的候選詞（供挑選）----------------
+            if plan.get("llm_used"):
+                _info = plan.get("llm_info") or {}
+                st.caption(
+                    f"🤖 AI 抽取完成（{_info.get('model', '')}，"
+                    f"{_info.get('ms', 0) / 1000:.1f} 秒"
+                    + ("，快取" if _info.get("cached") else "") + "）"
+                )
+                _cands = plan.get("llm_candidates") or []
+                if _cands:
+                    st.markdown(
+                        "**AI 提出的候選詞**（執行時會**逐一實際檢索**，"
+                        "挑查得到資料的那個；不是照單全收）"
+                    )
+                    for i, c in enumerate(_cands):
+                        st.caption(f"{i + 1}. `{c['query']}`"
+                                   f"（{c['source'].replace('LLM 建議', '')}）")
+                if plan.get("llm_tfda"):
+                    st.markdown(
+                        "**AI 提出的中文品名候選**（TFDA 檢索時實測挑選）"
+                    )
+                    st.caption("、".join(f"`{x}`" for x in plan["llm_tfda"]))
+                if plan.get("llm_condition"):
+                    st.caption(
+                        "AI 提出的疾病詞："
+                        + "、".join(f"`{x}`" for x in plan["llm_condition"][:4])
+                    )
+                if plan.get("warnings"):
+                    for w in plan["warnings"]:
+                        if "LLM" in w:
+                            st.warning(w)
 
             if plan.get("bilingual"):
                 st.success(
@@ -268,6 +318,7 @@ if run:
             condition_query=manual_cond.strip() or None,
             need_statement=need.strip() or None,
             tfda_db=TFDA_DB if TFDA_DB.exists() else None,
+            use_llm=st.session_state.get("use_llm", False),
             progress=progress,
         )
         bar.progress(1.0, text="完成")

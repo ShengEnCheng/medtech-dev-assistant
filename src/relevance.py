@@ -359,6 +359,15 @@ def build_candidates(description: str, plan: dict) -> list[dict]:
             continue
         add(p.get("en", ""), "文件中英對照")
 
+    # 1b. LLM 建議的候選（use_llm=True 時由 query_terms 帶入）
+    #
+    # 放在中英對照之後、對照表之前：LLM 比對照表更能抓到創新技術詞，
+    # 但仍須實測驗證 —— 實測 LLM 候選品質落差極大
+    # （'Ballistocardiograph' 71% vs 'Heart rate variability' 0%），
+    # 所以只是「多幾個候選」，由後續驗證決定採用哪個。
+    for c in (plan.get("llm_candidates") or []):
+        add(c.get("query") or "", c.get("source") or "LLM 建議")
+
     # 2. 裝置檢索詞（代表「產品是什麼」，比「怎麼運作」更接近產品身分）
     add(plan.get("device") or "", "裝置檢索詞")
 
@@ -415,11 +424,16 @@ def search_verified(description: str,
                 "warning": "無法從產品說明推導出可用的英文檢索詞，"
                            "請手動指定技術名稱或 FDA 官方品名。"}
 
+    # 候選數量：LLM 模式下候選變多，放寬到 6 個（每次檢索約 2-4 秒）。
+    # 仍設上限，避免公開網頁的單次查詢耗時過長。
+    limit_n = 6 if plan.get("llm_used") else 4
+    chosen_cands = candidates[:limit_n]
+
     best = None
     pool: list[dict] = []      # 所有候選的結果（供事後改選）
-    for i, cand in enumerate(candidates[:4]):
+    for i, cand in enumerate(chosen_cands):
         if progress:
-            progress(i + 1, len(candidates[:4]), cand["query"])
+            progress(i + 1, len(chosen_cands), cand["query"])
         try:
             res = search_fn(cand["query"], limit)
             papers = res.get("papers", []) if isinstance(res, dict) else res
@@ -433,6 +447,8 @@ def search_verified(description: str,
                          "relevance": sc, "count": len(papers)})
         if best is None or sc["rate"] > best["relevance"]["rate"]:
             best = entry
+        # 通過驗證即停（省時間）。候選順序已是信心由高到低，
+        # 第一個通過的就是最可信的那個。
         if sc["verdict"] == "pass":
             break
         time.sleep(0.5)

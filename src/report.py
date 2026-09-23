@@ -303,7 +303,11 @@ def _competitor_section(report: Report, n: int) -> str:
     A("")
     A("| 構面 | 數據 | 來源 |")
     A("|---|---|---|")
-    A(f"| 台灣已取證件數 | {c.taiwan_total} | TFDA 許可證資料集 |")
+    A(f"| 台灣已取證件數（最接近的既有產品） | {c.taiwan_total} "
+      f"| TFDA 許可證資料集 |")
+    if getattr(c, "taiwan_category_total", 0):
+        A(f"| 台灣同類品項件數（整個品類） | "
+          f"{c.taiwan_category_total} | TFDA 許可證資料集 |")
     if c.udi_total is not None:
         A(f"| 全球已上市器材 | {c.udi_total:,} | openFDA UDI |")
     if c.manufacturer_total is not None:
@@ -314,15 +318,47 @@ def _competitor_section(report: Report, n: int) -> str:
         A(f"| 召回紀錄 | {c.recall_total:,} | openFDA 召回 |")
     A("")
 
-    # --- 台灣 ---
+    # --- 台灣（兩層：最接近的既有產品 / 整個品類的市場地景）---
     if c.taiwan_licensees:
         used = "、".join(c.tfda_used_terms) if c.tfda_used_terms else c.tfda_query
-        A(f"### 台灣已取證廠商（檢索詞「{used}」）")
+        A(f"### 台灣最接近的既有產品（檢索詞「{used}」）")
         A("")
-        A("| 申請商 | 許可證件數 | 醫器主類別 |")
-        A("|---|---|---|")
+        A("> 這是**最接近您產品的既有許可證**。創新產品通常只找到"
+          "少數幾件（甚至 0 件）—— 這正是「市場尚未被佔滿」的訊號。")
+        A("")
+        A("| 申請商 | 許可證件數 | 醫器主類別 | 樣本產品 |")
+        A("|---|---|---|---|")
         for x in c.taiwan_licensees[:12]:
-            A(f"| {x.applicant} | {x.license_count} | {'、'.join(x.categories[:2])} |")
+            _s = "；".join(s[:30] for s in (x.samples or [])[:2]) or "—"
+            A(f"| {x.applicant} | {x.license_count} "
+              f"| {'、'.join(x.categories[:2])} | {_s} |")
+        A("")
+
+    # --- 台灣：同類品項（回答「這個品類有多少玩家」）---
+    if getattr(c, "taiwan_category_licensees", None):
+        _ct = "、".join(getattr(c, "taiwan_category_terms", []) or [])
+        A(f"### 台灣同類品項市場地景（檢索詞「{_ct}」）")
+        A("")
+        A(f"以品類層級的核心品名檢索，共 **"
+          f"{c.taiwan_category_total} 件**同類許可證 —— "
+          "這才是回答「這個品類有多擠」的數字。")
+        A("")
+        _bd = getattr(c, "taiwan_category_breakdown", None) or []
+        if _bd:
+            A("各核心詞的命中件數（供檢視是否有單一泛用詞主導）：")
+            A("")
+            for _b in _bd:
+                A(f"- `{_b['term']}` → {_b['count']} 件")
+            A("")
+        A("| 申請商 | 許可證件數 | 樣本產品 |")
+        A("|---|---|---|")
+        for x in c.taiwan_category_licensees[:12]:
+            _s = "；".join(s[:30] for s in (x.samples or [])[:2]) or "—"
+            A(f"| {x.applicant} | {x.license_count} | {_s} |")
+        A("")
+        A("> **兩層數字的用法**：精確層少、同類層多，代表您的產品"
+          "在既有品類中是**新切入點**（有市場基礎但無直接對應品）；"
+          "兩層都少，代表可能是**全新品類**（教育市場成本高）。")
         A("")
 
     # --- 全球品牌商 ---
