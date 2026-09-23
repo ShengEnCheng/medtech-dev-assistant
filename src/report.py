@@ -24,18 +24,7 @@ def to_markdown(report: Report) -> str:
     _plan = getattr(report, "query_plan", {}) or {}
     if _plan.get("tech"):
         A(f"- **技術關鍵詞（文獻）**：{'、'.join(_plan['tech'])}")
-    _pp = getattr(report, "paper", None)
-    if _pp is not None and getattr(_pp, "relevance", None):
-        _rel = _pp.relevance
-        _lbl = {"pass": "✅ 通過相關性驗證",
-                "weak": "🔸 相關性偏低",
-                "fail": "❌ 相關性不符",
-                "unverified": "❔ 無法自動驗證（文件中無中英對照）",
-                "unknown": "❔ 樣本不足"}.get(_rel.get("verdict"), "")
-        if _lbl:
-            A(f"- **文獻檢索品質**：{_lbl}"
-              f"（技術命中率 {_rel.get('rate', 0):.0%}，"
-              f"{_rel.get('hits', 0)}/{_rel.get('total', 0)} 篇）")
+
     if _plan.get("bilingual"):
         A("- **取自文件的中英對照**："
           + "、".join(f"{b['zh']} → {b['en']}"
