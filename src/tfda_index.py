@@ -267,9 +267,44 @@ def search(db_path: Path, query: str, limit: int = 10,
                             active_only=active_only, strict=strict)["rows"]
 
 
+def _has_column(db_path: Path, table: str, column: str) -> bool:
+    """檢查資料表是否有指定欄位（快取於模組層級）。
+
+    為什麼需要：精簡索引（tfda_slim.db）移除了 efficacy 等欄位，
+    但完整索引（由 CSV 重建）有。檢索 SQL 必須配合實際欄位動態組裝，
+    否則會 `no such column` 而讓整個中文檢索失效。
+
+    實測踩到的 bug：精簡索引上線後，所有 TFDA 中文檢索都拋
+    OperationalError，但介面只顯示「未取得資料」，錯誤被吞掉 ——
+    使用者看到的是「查不到」，不是「程式壞了」。
+    """
+    key = (str(db_path), table, column)
+    if key in _COL_CACHE:
+        return _COL_CACHE[key]
+    ok = False
+    try:
+        con = sqlite3.connect(db_path)
+        try:
+            cols = [d[1] for d in con.execute(f"PRAGMA table_info({table})")]
+            ok = column in cols
+        finally:
+            con.close()
+    except Exception:
+        ok = False
+    _COL_CACHE[key] = ok
+    return ok
+
+
+_COL_CACHE: dict = {}
+
+
 def _search_rows(db_path: Path, query: str, *, active_only: bool,
                  strict: bool) -> list[dict]:
-    """內部：回傳依相關度排序的候選（含分數），供 search / count 共用。"""
+    """內部：回傳依相關度排序的候選（含分數），供 search / count 共用。
+
+    **欄位相容性**：efficacy 欄位是選填的（完整索引有、精簡索引沒有）。
+    查詢語句依實際 schema 動態組裝，兩種索引都能正常檢索。
+    """
     if not db_path.exists():
         return []
     raw_terms = [t for t in query.replace("-", " ").split() if len(t) > 1]
@@ -287,13 +322,23 @@ def _search_rows(db_path: Path, query: str, *, active_only: bool,
     con.row_factory = sqlite3.Row
     scored: dict[str, dict] = {}
 
+    # efficacy（效能／適應症）是選填欄位：完整索引有、精簡索引沒有。
+    # 實測 bug：精簡版上線後所有中文檢索都 `no such column: efficacy`，
+    # 而錯誤被上層吞掉，使用者只看到「查不到資料」。
+    has_eff = _has_column(db_path, "lic", "efficacy")
+    sel_cols = ("license_no, class_level, name_zh, name_en, category, "
+                "applicant, maker_country, valid_date"
+                + (", efficacy" if has_eff else ""))
+    where_base = "name_zh LIKE ? OR name_en LIKE ?"
+    if has_eff:
+        where_base += " OR efficacy LIKE ?"
+
     for t in terms:
         weight = min(len(t) / 5.0, 3.0)
-        sql = """SELECT license_no, class_level, name_zh, name_en, category,
-                        applicant, maker_country, valid_date, efficacy
+        sql = f"""SELECT {sel_cols}
                  FROM lic
-                 WHERE (name_zh LIKE ? OR name_en LIKE ? OR efficacy LIKE ?)"""
-        params: list = [f"%{t}%", f"%{t}%", f"%{t}%"]
+                 WHERE ({where_base})"""
+        params: list = [f"%{t}%", f"%{t}%"] + ([f"%{t}%"] if has_eff else [])
         if active_only:
             sql += " AND (cancelled IS NULL OR cancelled = '' OR cancelled = '未註銷')"
         sql += " LIMIT 20000"
